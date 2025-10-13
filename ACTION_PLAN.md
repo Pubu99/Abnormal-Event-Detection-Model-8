@@ -29,7 +29,29 @@ pip install -r requirements.txt
 
 ---
 
-### Step 2: Verify Setup ⏱️ 2 minutes
+### Step 2: Analyze Your Data 📊 ⏱️ 3 minutes
+
+```powershell
+python analyze_data.py
+```
+
+**What this shows:**
+
+- ✅ Exact image count per class (Train & Test)
+- ✅ Class distribution percentages
+- ✅ Imbalance severity (ratio calculation)
+- ✅ Class weights being used for balancing
+- ✅ Visual charts saved to `outputs/results/data_distribution.png`
+
+**Why this matters:** You need to understand your data before training! This verifies:
+
+- Both Train and Test datasets are loaded correctly
+- Class imbalance is identified and will be addressed
+- Your data matches expectations (1.27M train, 111K test images)
+
+---
+
+### Step 3: Verify Setup ⏱️ 2 minutes
 
 ```powershell
 python test_setup.py
@@ -39,14 +61,14 @@ python test_setup.py
 
 - ✅ All imports successful
 - ✅ CUDA detected (RTX 5090)
-- ✅ Data loaded correctly
-- ✅ Model created successfully
+- ✅ Data loaded correctly from both Train and Test folders
+- ✅ Model created successfully (5.8M parameters)
 
 **If any test fails:** Check the error message and fix before proceeding.
 
 ---
 
-### Step 3: Optional - Review Configuration ⏱️ 5 minutes
+### Step 4: Optional - Review Configuration ⏱️ 5 minutes
 
 Open `configs/config.yaml` and review (you can leave defaults):
 
@@ -66,7 +88,7 @@ hardware:
 
 ---
 
-### Step 4: Start Training! ⏱️ 1 minute to start
+### Step 5: Start Training! 🚀 ⏱️ 1 minute to start
 
 ```powershell
 # Basic training
