@@ -759,34 +759,11 @@ python train.py --wandb
 
 ---
 
-## 🎓 Citation
-
-If you use this project in your research, please cite:
-
-```bibtex
-@misc{anomaly_detection_2024,
-  title={Multi-Camera Anomaly Detection with Advanced Generalization},
-  author={Your Name},
-  year={2024},
-  publisher={GitHub},
-  url={https://github.com/yourusername/Abnormal-Event-Detection-Model-8}
-}
-```
-
----
-
 ## 📝 License
 
 This project is licensed under the MIT License - see LICENSE file for details.
 
 Academic Research Project - Final Year Project (FYP)
-
----
-
-## 👥 Contributors
-
-- **Your Name** - Primary Developer
-- **Supervisor Name** - Project Supervisor
 
 ---
 
@@ -802,20 +779,11 @@ Academic Research Project - Final Year Project (FYP)
 
 ---
 
-## 📞 Contact
-
-For questions or collaboration:
-- **Email**: your.email@university.edu
-- **GitHub**: [@yourusername](https://github.com/yourusername)
-- **LinkedIn**: [Your Name](https://linkedin.com/in/yourname)
-
----
-
 ## ⭐ Star History
 
 If you find this project useful, please consider giving it a star! ⭐
 
 ---
 
-**Last Updated**: January 2024  
+**Last Updated**: October 2025
 **Version**: 2.0.0
