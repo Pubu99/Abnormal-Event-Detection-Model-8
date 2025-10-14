@@ -167,12 +167,15 @@ class CombinedLoss(nn.Module):
             nu=config.model.anomaly_head.nu
         )
         
-        # Loss weights
+        # Loss weights - SVDD weight from config to prevent dominance
         self.weight_classification = 1.0
         self.weight_binary = 0.5
-        self.weight_svdd = 0.3
+        self.weight_svdd = config.model.anomaly_head.get('loss_weight', 0.3)
+        
+        # SVDD warmup - don't use SVDD loss for first few epochs
+        self.svdd_warmup_epochs = config.model.anomaly_head.get('warmup_epochs', 0)
     
-    def forward(self, outputs, targets, is_anomaly, center):
+    def forward(self, outputs, targets, is_anomaly, center, current_epoch=None):
         """
         Compute combined loss.
         
@@ -181,6 +184,7 @@ class CombinedLoss(nn.Module):
             targets: Class labels (B,)
             is_anomaly: Binary anomaly labels (B,)
             center: SVDD center vector
+            current_epoch: Current training epoch (for warmup)
             
         Returns:
             Dictionary with individual and total losses
@@ -191,17 +195,24 @@ class CombinedLoss(nn.Module):
         # Binary anomaly detection loss
         binary_loss = self.binary_loss(outputs['binary_logits'], is_anomaly)
         
-        # Deep SVDD loss (if embeddings available)
+        # Deep SVDD loss (if embeddings available and after warmup)
         if 'embeddings' in outputs:
-            svdd_loss = self.svdd_loss(outputs['embeddings'], center, is_anomaly)
+            # Check if we're still in warmup period
+            if current_epoch is not None and current_epoch < self.svdd_warmup_epochs:
+                svdd_loss = torch.tensor(0.0, device=outputs['class_logits'].device)
+                effective_svdd_weight = 0.0
+            else:
+                svdd_loss = self.svdd_loss(outputs['embeddings'], center, is_anomaly)
+                effective_svdd_weight = self.weight_svdd
         else:
             svdd_loss = torch.tensor(0.0, device=outputs['class_logits'].device)
+            effective_svdd_weight = 0.0
         
         # Total loss
         total_loss = (
             self.weight_classification * class_loss +
             self.weight_binary * binary_loss +
-            self.weight_svdd * svdd_loss
+            effective_svdd_weight * svdd_loss
         )
         
         return {

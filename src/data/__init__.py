@@ -5,7 +5,9 @@ from .dataset import (
     get_train_transforms,
     get_val_transforms,
     create_dataloaders,
-    create_test_dataloader
+    create_test_dataloader,
+    MixupCutmixWrapper,
+    mixup_criterion
 )
 
 __all__ = [
@@ -13,5 +15,7 @@ __all__ = [
     'get_train_transforms',
     'get_val_transforms',
     'create_dataloaders',
-    'create_test_dataloader'
+    'create_test_dataloader',
+    'MixupCutmixWrapper',
+    'mixup_criterion'
 ]

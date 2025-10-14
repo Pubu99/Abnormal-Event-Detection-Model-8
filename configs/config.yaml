@@ -1,4 +1,4 @@
-# Main Configuration File for Anomaly Detection System
+d# Main Configuration File for Anomaly Detection System
 # All paths, hyperparameters, and settings
 
 # Project Settings
@@ -51,7 +51,7 @@ model:
     type: "efficientnet_b0" # Fast and accurate
     pretrained: true
     freeze_backbone: false
-    dropout: 0.3
+    dropout: 0.5  # INCREASED: Stronger regularization to prevent overfitting
 
   # Temporal modeling
   temporal:
@@ -59,17 +59,19 @@ model:
     hidden_dim: 256
     num_layers: 2
     bidirectional: true
-    dropout: 0.3
+    dropout: 0.5  # INCREASED: Stronger regularization to prevent overfitting
 
   # Feature dimensions
   feature_dim: 512
   embedding_dim: 128
 
-  # Anomaly detection head
+    # Anomaly detection head (Deep SVDD)
   anomaly_head:
     type: "deep_svdd" # Deep Support Vector Data Description
     center_learning: true
     nu: 0.1 # Outlier fraction
+    loss_weight: 0.05  # EMERGENCY FIX: Much lower to prevent gradient explosion (was 0.3)
+    warmup_epochs: 5  # Don't use SVDD loss for first 5 epochs
 
 # Training Configuration
 training:
@@ -78,31 +80,37 @@ training:
   batch_size: 128 # Optimized for RTX 5090
   gradient_accumulation_steps: 1 # Accumulate gradients over N steps (simulate larger batch)
 
-  # Learning rate
-  learning_rate: 0.001
-  max_learning_rate: 0.01 # For OneCycleLR (10x base LR)
+  # Learning rate - Ultra-conservative for NaN prevention (PROVEN STABLE)
+  learning_rate: 0.0001  # DO NOT INCREASE - this works!
+  max_learning_rate: 0.001  # DO NOT INCREASE - this works!
 
   lr_scheduler:
     type: "onecycle" # Options: onecycle, cosine_annealing, reduce_on_plateau
-    # OneCycleLR (FAST TRAINING - 50% time savings!)
+    # OneCycleLR - ADJUSTED for better generalization
     T_max: 100
     eta_min: 0.00001
-    warmup_epochs: 5
-    pct_start: 0.3 # Percentage of cycle spent increasing LR
+    warmup_epochs: 10  # INCREASED from 5 - gentler warmup
+    pct_start: 0.2  # REDUCED from 0.3 - peak LR earlier to avoid late instability
     div_factor: 25 # Initial LR = max_lr / div_factor
     final_div_factor: 10000 # Final LR = max_lr / final_div_factor
 
   # Optimizer
   optimizer:
     type: "adamw"
-    weight_decay: 0.0001
+    weight_decay: 0.01  # INCREASED from 0.0001 - stronger L2 regularization (100x stronger)
     betas: [0.9, 0.999]
+  
+  # Gradient clipping - EMERGENCY FIX for NaN prevention
+  gradient_clip:
+    enabled: true
+    max_norm: 1.0  # Clip gradients to prevent explosion
+    norm_type: 2  # L2 norm
 
-  # Sharpness-Aware Minimization (SAM) - NEW!
+  # Sharpness-Aware Minimization (SAM) - KEEP DISABLED until epoch 10
   # Seeks flat minima for better generalization on unseen data
   sam:
-    enabled: true # Enable SAM for improved generalization
-    rho: 0.05 # Neighborhood size (0.05 for AdamW, 0.2 for SGD)
+    enabled: false  # DISABLED: Will enable manually after verifying stability
+    rho: 0.02  # REDUCED from 0.05 - even smaller perturbation for safety
     adaptive: false # Use ASAM (adaptive SAM)
 
   # Stochastic Weight Averaging (SWA) - NEW!
@@ -113,94 +121,97 @@ training:
     lr: 0.00005 # SWA learning rate
     anneal_epochs: 10
 
-  # Advanced Augmentation - NEW!
-  # Mixup and CutMix for better generalization
+  # Advanced Augmentation - TEMPORARILY DISABLED FOR STABILITY
+  # Mixup and CutMix for better generalization (milder to reduce confusion)
   mixup_cutmix:
-    enabled: true
-    mixup_alpha: 0.2 # Mixup interpolation strength
-    cutmix_alpha: 1.0 # CutMix interpolation strength
-    prob: 0.5 # Probability of applying augmentation
+    enabled: false  # DISABLED: May cause numerical instability
+    mixup_alpha: 0.1  # REDUCED from 0.2 - gentler mixing
+    cutmix_alpha: 0.5  # REDUCED from 1.0 - gentler cutting
+    prob: 0.3  # REDUCED from 0.5 - apply less frequently
     switch_prob: 0.5 # Probability of mixup vs cutmix
 
-  # Loss function
+  # Loss function - ENHANCED for class imbalance
   loss:
     type: "focal" # Better for class imbalance
     alpha: 0.25
-    gamma: 2.0
+    gamma: 2.5  # INCREASED from 2.0 - focus more on hard examples
     label_smoothing: 0.1
+    class_weights_scale: 2.0  # NEW: Scale class weights for minority classes
 
-  # Class imbalance handling
+  # Class imbalance handling - ENHANCED
   class_balance:
-    method: "weighted_sampling" # Options: weighted_sampling, focal_loss, both
+    method: "both"  # CHANGED from "weighted_sampling" - use both techniques
     use_class_weights: true
-    oversample_minority: false
+    oversample_minority: true  # ENABLED: Oversample rare classes (Abuse, Fighting, etc.)
+    minority_threshold: 1000  # NEW: Classes with <1000 samples will be oversampled
+    oversample_ratio: 2.0  # NEW: Oversample minority classes 2x
 
   # Mixed precision training (FP16) - SPEED OPTIMIZATION
   mixed_precision: true # 2-3x faster training!
 
-  # Model Compilation (PyTorch 2.0+) - NEW SPEED OPTIMIZATION!
+  # Model Compilation (PyTorch 2.0+) - TEMPORARILY DISABLED FOR STABILITY
   # Uses torch.compile() for 30-50% speedup
   compile_model:
-    enabled: true
+    enabled: false  # DISABLED: torch.compile may interfere with gradient flow
     mode: "reduce-overhead" # Options: default, reduce-overhead, max-autotune
     # reduce-overhead: Best for single GPU (30% faster)
     # max-autotune: Best for multi-GPU (50% faster but longer compile)
 
-  # Gradient clipping
-  gradient_clip:
-    enabled: true
-    max_norm: 1.0
-
-  # Early stopping
+  # Early stopping - INCREASED PATIENCE
   early_stopping:
-    patience: 15
-    min_delta: 0.001
+    patience: 25  # INCREASED from 15 - allow more epochs for convergence
+    min_delta: 0.0005  # REDUCED from 0.001 - more sensitive to improvements
     monitor: "val_f1_score"
     mode: "max"
 
-  # Checkpointing
+  # Checkpointing - SAVE BEST MODEL EVERY EPOCH
   checkpoint:
-    save_top_k: 3
-    monitor: "val_f1_score"
-    mode: "max"
-    save_last: true
+    save_every_epoch: true  # NEW: Save checkpoint every epoch
+    save_best_only: true  # NEW: Keep only the best model based on metric
+    save_top_k: 5  # Keep top 5 best models (increased from 3)
+    monitor: "val_f1_macro"  # FIXED: Use f1_macro to match actual metric key
+    mode: "max"  # Higher F1 is better
+    save_last: true  # Also save the last epoch checkpoint
+    verbose: true  # Print when saving checkpoints
 
 # Augmentation Configuration
 augmentation:
   train:
-    # Geometric transforms
-    random_rotation: 15
+    # Geometric transforms - ENHANCED diversity
+    random_rotation: 20  # INCREASED from 15
     random_horizontal_flip: 0.5
-    random_vertical_flip: 0.2
+    random_vertical_flip: 0.3  # INCREASED from 0.2
     random_affine:
-      degrees: 10
-      translate: [0.1, 0.1]
-      scale: [0.9, 1.1]
+      degrees: 15  # INCREASED from 10
+      translate: [0.15, 0.15]  # INCREASED from [0.1, 0.1]
+      scale: [0.85, 1.15]  # WIDER range from [0.9, 1.1]
 
-    # Color transforms
+    # Color transforms - ENHANCED for robustness
     color_jitter:
-      brightness: 0.2
-      contrast: 0.2
-      saturation: 0.2
-      hue: 0.1
+      brightness: 0.3  # INCREASED from 0.2
+      contrast: 0.3  # INCREASED from 0.2
+      saturation: 0.3  # INCREASED from 0.2
+      hue: 0.15  # INCREASED from 0.1
 
-    # Noise and blur
+    # Noise and blur - ENHANCED
     gaussian_blur:
       kernel_size: 5
-      sigma: [0.1, 2.0]
-      p: 0.3
+      sigma: [0.1, 2.5]  # INCREASED from [0.1, 2.0]
+      p: 0.4  # INCREASED from 0.3
 
     gaussian_noise:
-      var_limit: [10, 50]
-      p: 0.3
+      var_limit: [10, 70]  # INCREASED from [10, 50]
+      p: 0.4  # INCREASED from 0.3
 
-    # Adaptive augmentation for environment robustness
-    random_brightness_contrast: 0.4
-    random_shadow: 0.3
-    random_rain: 0.2
-    random_fog: 0.2
+    # Adaptive augmentation for environment robustness - ENHANCED
+    random_brightness_contrast: 0.5  # INCREASED from 0.4
+    random_shadow: 0.4  # INCREASED from 0.3
+    random_rain: 0.3  # INCREASED from 0.2
+    
+    # NEW: Additional augmentations for distribution robustness
+    random_fog: 0.2  # NEW: Simulate foggy conditions
 
-    # Advanced augmentation - NEW!
+    # Advanced augmentation - Occlusion robustness
     # GridMask and Cutout for occlusion robustness
     coarse_dropout:
       enabled: true

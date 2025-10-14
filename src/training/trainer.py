@@ -12,7 +12,8 @@ from typing import Optional, Dict
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast
+from torch.amp import GradScaler
 from torch.optim import AdamW, SGD
 from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau, OneCycleLR
 from torch.optim.swa_utils import AveragedModel, SWALR
@@ -73,8 +74,11 @@ class AnomalyDetectionTrainer:
         self.model = create_model(self.config, device=self.device)
         
         # Model Compilation (PyTorch 2.0+) for SPEED - NEW!
+        # Note: Disabled when using SAM due to CUDA graph conflicts
         compile_config = self.config.training.get('compile_model', {})
-        if compile_config.get('enabled', False):
+        sam_enabled = self.config.training.get('sam', {}).get('enabled', False)
+        
+        if compile_config.get('enabled', False) and not sam_enabled:
             try:
                 print(f"\n⚡ Compiling model with torch.compile() for speedup...")
                 print(f"   Mode: {compile_config.get('mode', 'reduce-overhead')}")
@@ -86,6 +90,9 @@ class AnomalyDetectionTrainer:
             except Exception as e:
                 print(f"   ⚠️  Compilation failed: {e}")
                 print(f"   Continuing without compilation...")
+        elif compile_config.get('enabled', False) and sam_enabled:
+            print(f"\n⚠️  torch.compile() disabled because SAM is enabled")
+            print(f"   (CUDA graphs conflict with SAM's dual forward passes)")
         
         # Log model graph
         self.logger.log_model_graph(self.model, (1, 3, 64, 64))
@@ -135,7 +142,7 @@ class AnomalyDetectionTrainer:
             self.mixup_cutmix = None
         
         # Mixed precision training
-        self.scaler = GradScaler() if self.config.training.mixed_precision else None
+        self.scaler = GradScaler('cuda') if self.config.training.mixed_precision else None
         
         # Early stopping
         self.early_stopping = EarlyStopping(
@@ -153,6 +160,16 @@ class AnomalyDetectionTrainer:
         self._initialize_svdd_center()
         
         print("\n✅ Trainer initialized successfully!")
+    
+    def _get_actual_model(self):
+        """Get the actual model, unwrapping SWA if needed."""
+        if hasattr(self.model, 'module'):
+            return self.model.module
+        return self.model
+    
+    def _get_svdd_center(self):
+        """Get SVDD center from the actual model."""
+        return self._get_actual_model().anomaly_head.center
     
     def _create_optimizer(self):
         """Create optimizer with optional SAM wrapper."""
@@ -288,7 +305,7 @@ class AnomalyDetectionTrainer:
         
         if centers:
             center = torch.stack(centers).mean(0)
-            self.model.anomaly_head.center.data = center
+            self._get_svdd_center().data = center
             print(f"   ✅ SVDD center initialized from {len(centers)} batches")
         
         self.model.train()
@@ -331,25 +348,25 @@ class AnomalyDetectionTrainer:
             def closure():
                 """Closure function for SAM optimizer."""
                 if self.scaler:
-                    with autocast():
+                    with autocast(device_type="cuda"):
                         outputs = self.model(images, return_embeddings=True)
                         if use_mixup:
                             # Compute mixup loss
-                            loss_a = self.criterion(outputs, labels_a, is_anomaly, self.model.anomaly_head.center)['total']
-                            loss_b = self.criterion(outputs, labels_b, is_anomaly, self.model.anomaly_head.center)['total']
+                            loss_a = self.criterion(outputs, labels_a, is_anomaly, self._get_svdd_center())['total']
+                            loss_b = self.criterion(outputs, labels_b, is_anomaly, self._get_svdd_center())['total']
                             loss = lam * loss_a + (1 - lam) * loss_b
                         else:
-                            loss_dict = self.criterion(outputs, labels, is_anomaly, self.model.anomaly_head.center)
+                            loss_dict = self.criterion(outputs, labels, is_anomaly, self._get_svdd_center())
                             loss = loss_dict['total']
                     return loss
                 else:
                     outputs = self.model(images, return_embeddings=True)
                     if use_mixup:
-                        loss_a = self.criterion(outputs, labels_a, is_anomaly, self.model.anomaly_head.center)['total']
-                        loss_b = self.criterion(outputs, labels_b, is_anomaly, self.model.anomaly_head.center)['total']
+                        loss_a = self.criterion(outputs, labels_a, is_anomaly, self._get_svdd_center())['total']
+                        loss_b = self.criterion(outputs, labels_b, is_anomaly, self._get_svdd_center())['total']
                         loss = lam * loss_a + (1 - lam) * loss_b
                     else:
-                        loss_dict = self.criterion(outputs, labels, is_anomaly, self.model.anomaly_head.center)
+                        loss_dict = self.criterion(outputs, labels, is_anomaly, self._get_svdd_center())
                         loss = loss_dict['total']
                     return loss
             
@@ -357,47 +374,58 @@ class AnomalyDetectionTrainer:
             if self.use_sam:
                 # SAM requires two forward-backward passes
                 if self.scaler:
-                    with autocast():
-                        outputs = self.model(images, return_embeddings=True)
-                        if use_mixup:
-                            loss_a = self.criterion(outputs, labels_a, is_anomaly, self.model.anomaly_head.center)['total']
-                            loss_b = self.criterion(outputs, labels_b, is_anomaly, self.model.anomaly_head.center)['total']
-                            loss = lam * loss_a + (1 - lam) * loss_b
-                        else:
-                            loss_dict = self.criterion(outputs, labels, is_anomaly, self.model.anomaly_head.center)
-                            loss = loss_dict['total']
-                    
+                    # With mixed precision, we need manual control
                     # First forward-backward pass
                     self.optimizer.zero_grad()
+                    with autocast(device_type="cuda"):
+                        outputs = self.model(images, return_embeddings=True)
+                        if use_mixup:
+                            loss_dict_a = self.criterion(outputs, labels_a, is_anomaly, self._get_svdd_center(), self.current_epoch)
+                            loss_dict_b = self.criterion(outputs, labels_b, is_anomaly, self._get_svdd_center(), self.current_epoch)
+                            loss = lam * loss_dict_a['total'] + (1 - lam) * loss_dict_b['total']
+                            # Create averaged loss_dict
+                            loss_dict = {k: lam * loss_dict_a[k] + (1 - lam) * loss_dict_b[k] for k in loss_dict_a}
+                        else:
+                            loss_dict = self.criterion(outputs, labels, is_anomaly, self._get_svdd_center(), self.current_epoch)
+                            loss = loss_dict['total']
+                    
                     self.scaler.scale(loss).backward()
                     self.scaler.unscale_(self.optimizer)
                     self.optimizer.first_step(zero_grad=True)
+                    self.scaler.update()
                     
-                    # Second forward-backward pass
-                    with autocast():
+                    # Second forward-backward pass  
+                    # Reset scaler state for second pass
+                    self.scaler = GradScaler('cuda')
+                    with autocast(device_type="cuda"):
                         outputs2 = self.model(images, return_embeddings=True)
                         if use_mixup:
-                            loss_a2 = self.criterion(outputs2, labels_a, is_anomaly, self.model.anomaly_head.center)['total']
-                            loss_b2 = self.criterion(outputs2, labels_b, is_anomaly, self.model.anomaly_head.center)['total']
-                            loss2 = lam * loss_a2 + (1 - lam) * loss_b2
+                            loss_dict2_a = self.criterion(outputs2, labels_a, is_anomaly, self._get_svdd_center(), self.current_epoch)
+                            loss_dict2_b = self.criterion(outputs2, labels_b, is_anomaly, self._get_svdd_center(), self.current_epoch)
+                            loss2 = lam * loss_dict2_a['total'] + (1 - lam) * loss_dict2_b['total']
                         else:
-                            loss_dict2 = self.criterion(outputs2, labels, is_anomaly, self.model.anomaly_head.center)
+                            loss_dict2 = self.criterion(outputs2, labels, is_anomaly, self._get_svdd_center(), self.current_epoch)
                             loss2 = loss_dict2['total']
                     
                     self.scaler.scale(loss2).backward()
-                    self.scaler.unscale_(self.optimizer)
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                    if self.config.training.gradient_clip.enabled:
+                        self.scaler.unscale_(self.optimizer)
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 
+                                                       max_norm=self.config.training.gradient_clip.max_norm)
+                    else:
+                        self.scaler.unscale_(self.optimizer)
                     self.optimizer.second_step(zero_grad=True)
                     self.scaler.update()
                 else:
                     # No mixed precision
                     outputs = self.model(images, return_embeddings=True)
                     if use_mixup:
-                        loss_a = self.criterion(outputs, labels_a, is_anomaly, self.model.anomaly_head.center)['total']
-                        loss_b = self.criterion(outputs, labels_b, is_anomaly, self.model.anomaly_head.center)['total']
-                        loss = lam * loss_a + (1 - lam) * loss_b
+                        loss_dict_a = self.criterion(outputs, labels_a, is_anomaly, self._get_svdd_center(), self.current_epoch)
+                        loss_dict_b = self.criterion(outputs, labels_b, is_anomaly, self._get_svdd_center(), self.current_epoch)
+                        loss = lam * loss_dict_a['total'] + (1 - lam) * loss_dict_b['total']
+                        loss_dict = {k: lam * loss_dict_a[k] + (1 - lam) * loss_dict_b[k] for k in loss_dict_a}
                     else:
-                        loss_dict = self.criterion(outputs, labels, is_anomaly, self.model.anomaly_head.center)
+                        loss_dict = self.criterion(outputs, labels, is_anomaly, self._get_svdd_center(), self.current_epoch)
                         loss = loss_dict['total']
                     
                     self.optimizer.zero_grad()
@@ -407,11 +435,11 @@ class AnomalyDetectionTrainer:
                     # Second pass
                     outputs2 = self.model(images, return_embeddings=True)
                     if use_mixup:
-                        loss_a2 = self.criterion(outputs2, labels_a, is_anomaly, self.model.anomaly_head.center)['total']
-                        loss_b2 = self.criterion(outputs2, labels_b, is_anomaly, self.model.anomaly_head.center)['total']
-                        loss2 = lam * loss_a2 + (1 - lam) * loss_b2
+                        loss_dict2_a = self.criterion(outputs2, labels_a, is_anomaly, self._get_svdd_center(), self.current_epoch)
+                        loss_dict2_b = self.criterion(outputs2, labels_b, is_anomaly, self._get_svdd_center(), self.current_epoch)
+                        loss2 = lam * loss_dict2_a['total'] + (1 - lam) * loss_dict2_b['total']
                     else:
-                        loss_dict2 = self.criterion(outputs2, labels, is_anomaly, self.model.anomaly_head.center)
+                        loss_dict2 = self.criterion(outputs2, labels, is_anomaly, self._get_svdd_center(), self.current_epoch)
                         loss2 = loss_dict2['total']
                     
                     loss2.backward()
@@ -420,14 +448,15 @@ class AnomalyDetectionTrainer:
             else:
                 # Standard training (no SAM)
                 if self.scaler:
-                    with autocast():
+                    with autocast(device_type="cuda"):
                         outputs = self.model(images, return_embeddings=True)
                         if use_mixup:
-                            loss_a = self.criterion(outputs, labels_a, is_anomaly, self.model.anomaly_head.center)['total']
-                            loss_b = self.criterion(outputs, labels_b, is_anomaly, self.model.anomaly_head.center)['total']
-                            loss = lam * loss_a + (1 - lam) * loss_b
+                            loss_dict_a = self.criterion(outputs, labels_a, is_anomaly, self._get_svdd_center(), self.current_epoch)
+                            loss_dict_b = self.criterion(outputs, labels_b, is_anomaly, self._get_svdd_center(), self.current_epoch)
+                            loss = lam * loss_dict_a['total'] + (1 - lam) * loss_dict_b['total']
+                            loss_dict = {k: lam * loss_dict_a[k] + (1 - lam) * loss_dict_b[k] for k in loss_dict_a}
                         else:
-                            loss_dict = self.criterion(outputs, labels, is_anomaly, self.model.anomaly_head.center)
+                            loss_dict = self.criterion(outputs, labels, is_anomaly, self._get_svdd_center(), self.current_epoch)
                             loss = loss_dict['total']
                     
                     self.optimizer.zero_grad()
@@ -439,12 +468,12 @@ class AnomalyDetectionTrainer:
                 else:
                     outputs = self.model(images, return_embeddings=True)
                     if use_mixup:
-                        loss_a = self.criterion(outputs, labels_a, is_anomaly, self.model.anomaly_head.center)['total']
-                        loss_b = self.criterion(outputs, labels_b, is_anomaly, self.model.anomaly_head.center)['total']
-                        loss = lam * loss_a + (1 - lam) * loss_b
-                        loss_dict = {'total': loss, 'classification': loss, 'binary': torch.tensor(0.), 'svdd': torch.tensor(0.)}
+                        loss_dict_a = self.criterion(outputs, labels_a, is_anomaly, self._get_svdd_center(), self.current_epoch)
+                        loss_dict_b = self.criterion(outputs, labels_b, is_anomaly, self._get_svdd_center(), self.current_epoch)
+                        loss = lam * loss_dict_a['total'] + (1 - lam) * loss_dict_b['total']
+                        loss_dict = {k: lam * loss_dict_a[k] + (1 - lam) * loss_dict_b[k] for k in loss_dict_a}
                     else:
-                        loss_dict = self.criterion(outputs, labels, is_anomaly, self.model.anomaly_head.center)
+                        loss_dict = self.criterion(outputs, labels, is_anomaly, self._get_svdd_center(), self.current_epoch)
                         loss = loss_dict['total']
                     
                     self.optimizer.zero_grad()
@@ -524,9 +553,14 @@ class AnomalyDetectionTrainer:
             
             # Forward pass
             outputs = self.model(images, return_embeddings=True)
+            
+            # Get the actual model (unwrap SWA if needed)
+            actual_model = self.model.module if hasattr(self.model, 'module') else self.model
+            
             loss_dict = self.criterion(
                 outputs, labels, is_anomaly,
-                self.model.anomaly_head.center
+                actual_model.anomaly_head.center,
+                self.current_epoch
             )
             
             # Update losses
@@ -621,19 +655,36 @@ class AnomalyDetectionTrainer:
             self.logger.log_metrics(log_dict, step=self.global_step)
             
             # Save checkpoint
-            monitor_metric = val_metrics.get(
-                self.config.training.checkpoint.monitor.replace('val_', ''),
-                0
-            )
+            # Extract the metric name without 'val_' prefix to match metrics dict keys
+            monitor_key = self.config.training.checkpoint.monitor.replace('val_', '')
             
-            if monitor_metric > self.best_val_metric:
+            # Try multiple possible key names for F1 score
+            monitor_metric = val_metrics.get(monitor_key, 
+                             val_metrics.get('f1_score',
+                             val_metrics.get('f1_macro', 0)))
+            
+            # Check if this is the best model
+            is_best = monitor_metric > self.best_val_metric
+            if is_best:
                 self.best_val_metric = monitor_metric
-                self.save_checkpoint(is_best=True, metrics=val_metrics)
                 print(f"✅ New best model! {self.config.training.checkpoint.monitor}: {monitor_metric:.4f}")
             
-            # Regular checkpoint
-            if (epoch + 1) % 10 == 0:
-                self.save_checkpoint(is_best=False, metrics=val_metrics)
+            # Save checkpoint every epoch if configured
+            save_every_epoch = self.config.training.checkpoint.get('save_every_epoch', False)
+            if save_every_epoch:
+                # Save with epoch number and metric for tracking
+                epoch_filename = f"epoch_{epoch+1:03d}_f1_{monitor_metric:.4f}.pth"
+                self.save_checkpoint(is_best=is_best, metrics=val_metrics, filename=epoch_filename)
+                if self.config.training.checkpoint.get('verbose', False):
+                    print(f"💾 Saved checkpoint: {epoch_filename}")
+            else:
+                # Original behavior: save best and periodic checkpoints
+                if is_best:
+                    self.save_checkpoint(is_best=True, metrics=val_metrics)
+                
+                # Regular checkpoint every 10 epochs
+                if (epoch + 1) % 10 == 0:
+                    self.save_checkpoint(is_best=False, metrics=val_metrics)
             
             # Early stopping check
             if self.early_stopping(monitor_metric):
@@ -679,7 +730,7 @@ class AnomalyDetectionTrainer:
         # Close logger
         self.logger.close()
     
-    def save_checkpoint(self, is_best: bool = False, metrics: Dict = None):
+    def save_checkpoint(self, is_best: bool = False, metrics: Dict = None, filename: str = None):
         """Save model checkpoint."""
         checkpoint = {
             'epoch': self.current_epoch,
@@ -692,10 +743,12 @@ class AnomalyDetectionTrainer:
             'metrics': metrics
         }
         
-        if is_best:
-            filename = "best_model.pth"
-        else:
-            filename = f"checkpoint_epoch_{self.current_epoch + 1}.pth"
+        # Use provided filename or generate default
+        if filename is None:
+            if is_best:
+                filename = "best_model.pth"
+            else:
+                filename = f"checkpoint_epoch_{self.current_epoch + 1}.pth"
         
         self.logger.save_checkpoint(
             self.model, self.optimizer,

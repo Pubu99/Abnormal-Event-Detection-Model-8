@@ -183,7 +183,8 @@ class DeepSVDDHead(nn.Module):
         )
         
         # Center vector (learned during training)
-        self.center = nn.Parameter(torch.randn(embedding_dim), requires_grad=False)
+        # CRITICAL FIX: Initialize to zeros instead of randn to prevent gradient explosion
+        self.center = nn.Parameter(torch.zeros(embedding_dim), requires_grad=False)
         
     def forward(self, x):
         """

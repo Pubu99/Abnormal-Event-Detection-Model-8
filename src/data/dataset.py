@@ -448,21 +448,42 @@ def create_dataloaders(config, use_weighted_sampling: bool = True):
     
     # Create samplers and loaders
     if use_weighted_sampling and config.training.class_balance.method in ['weighted_sampling', 'both']:
-        # Weighted sampler for balanced training
-        train_sampler = full_train_dataset.get_weighted_sampler()
-        # Only use samples from train split
+        # ENHANCED: Support for minority class oversampling
         train_indices = train_dataset.indices
-        train_weights = torch.zeros(len(full_train_dataset))
-        for idx in train_indices:
-            train_weights[idx] = 1.0
         
-        # Recompute for train split only
+        # Compute class counts for train split only
         class_counts_train = np.zeros(len(full_train_dataset.classes))
         for idx in train_indices:
             _, label = full_train_dataset.samples[idx]
             class_counts_train[label] += 1
         
+        # Determine minority classes
+        if config.training.class_balance.oversample_minority:
+            minority_threshold = config.training.class_balance.get('minority_threshold', 1000)
+            oversample_ratio = config.training.class_balance.get('oversample_ratio', 2.0)
+            
+            # Oversample minority classes
+            oversampled_indices = list(train_indices)
+            for idx in train_indices:
+                _, label = full_train_dataset.samples[idx]
+                if class_counts_train[label] < minority_threshold:
+                    # Add this sample multiple times
+                    for _ in range(int(oversample_ratio) - 1):
+                        oversampled_indices.append(idx)
+            
+            print(f"\n🔄 Minority Class Oversampling:")
+            print(f"   Original samples: {len(train_indices):,}")
+            print(f"   After oversampling: {len(oversampled_indices):,}")
+            print(f"   Oversampling ratio: {len(oversampled_indices)/len(train_indices):.2f}x")
+            train_indices = oversampled_indices
+        
+        # Compute sample weights (inverse frequency)
         class_weights = 1.0 / (torch.FloatTensor(class_counts_train) + 1e-6)
+        
+        # Apply class weight scaling if configured
+        if hasattr(config.training.loss, 'class_weights_scale'):
+            class_weights = class_weights * config.training.loss.class_weights_scale
+        
         sample_weights = torch.zeros(len(full_train_dataset))
         for idx in train_indices:
             _, label = full_train_dataset.samples[idx]
