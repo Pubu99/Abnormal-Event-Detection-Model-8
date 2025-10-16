@@ -1,0 +1,319 @@
+# Enhanced Configuration Based on SOTA Research
+# Combines: RNN Regression (88.7% AUC) + Focal Loss + Dynamic Weighting
+# Target: 85%+ test accuracy on UCF Crime
+
+project:
+  name: "abnormal_event_detection_research_enhanced"
+  version: "2.0"
+  description: "EfficientNet-BiLSTM-Transformer with Regression Loss and Focal Loss (Research-Backed)"
+
+# Data Configuration
+data:
+  dataset_name: "ucf_crime"
+  data_dir: "data/raw"
+  train_dir: "data/raw/Train"
+  test_dir: "data/raw/Test"
+  processed_dir: "data/processed"
+  
+  classes: [
+    "Abuse", "Arrest", "Arson", "Assault", "Burglary",
+    "Explosion", "Fighting", "RoadAccidents", "Robbery",
+    "Shooting", "Shoplifting", "Stealing", "Vandalism",
+    "NormalVideos"
+  ]
+  
+  num_classes: 14
+  
+  # Enhanced preprocessing from research
+  preprocessing:
+    image_size: [224, 224]  # Larger for better features
+    normalize:
+      mean: [0.485, 0.456, 0.406]
+      std: [0.229, 0.224, 0.225]
+    
+    # Data splitting
+  split:
+    train_ratio: 0.8
+    val_ratio: 0.2
+    random_seed: 42
+    stratified: true
+
+# Augmentation Configuration (from original working config)
+augmentation:
+  train:
+    # Geometric transforms
+    random_rotation: 20
+    random_horizontal_flip: 0.5
+    random_vertical_flip: 0.3
+    random_affine:
+      degrees: 15
+      translate: [0.15, 0.15]
+      scale: [0.85, 1.15]
+
+    # Color transforms
+    color_jitter:
+      brightness: 0.3
+      contrast: 0.3
+      saturation: 0.3
+      hue: 0.15
+
+    # Noise and blur
+    gaussian_blur:
+      kernel_size: 5
+      sigma: [0.1, 2.5]
+      p: 0.4
+
+    gaussian_noise:
+      var_limit: [10, 70]
+      p: 0.4
+
+    # Adaptive augmentation
+    random_brightness_contrast: 0.5
+    random_shadow: 0.4
+    random_rain: 0.3
+    random_fog: 0.2
+
+    # Occlusion robustness
+    coarse_dropout:
+      enabled: true
+      max_holes: 8
+      max_height: 8
+      max_width: 8
+      p: 0.3
+
+    # Random erasing
+    random_erasing:
+      enabled: true
+      p: 0.3
+      scale: [0.02, 0.33]
+      ratio: [0.3, 3.3]
+
+    # Normalization
+    normalize:
+      mean: [0.485, 0.456, 0.406]
+      std: [0.229, 0.224, 0.225]
+
+  val:
+    normalize:
+      mean: [0.485, 0.456, 0.406]
+      std: [0.229, 0.224, 0.225]
+
+# Model Configuration (Research-Enhanced Architecture)
+model:
+  # Spatial feature extractor
+  backbone:
+    type: "efficientnet_b0"  # KEEP - proven stable, 5.8M params
+    pretrained: true
+    freeze_backbone: false  # Fine-tune for UCF Crime domain
+    dropout: 0.5  # Strong regularization
+  
+  # Temporal modeling (BiLSTM + Transformer from research)
+  temporal:
+    # First stage: BiLSTM for local temporal patterns
+    lstm:
+      type: "bilstm"
+      hidden_dim: 256
+      num_layers: 2
+      bidirectional: true
+      dropout: 0.5
+    
+    # Second stage: Transformer for long-range dependencies (NEW!)
+    transformer:
+      enabled: true  # From CNN-BiLSTM-Transformer paper
+      num_layers: 2
+      num_heads: 8
+      dim_feedforward: 1024
+      dropout: 0.3
+      use_relative_position: true  # Better for temporal sequences
+  
+  # Feature dimensions
+  feature_dim: 512  # After BiLSTM (256*2 for bidirectional)
+  embedding_dim: 256  # After Transformer
+  
+  # Prediction heads (Research-Based)
+  heads:
+    # Primary: Regression head (88.7% AUC method)
+    regression:
+      enabled: true
+      prediction_steps: 4  # Predict 4 frames ahead
+      feature_dim: 256
+      hidden_dims: [512, 256]
+      dropout: 0.3
+    
+    # Secondary: Classification head (for auxiliary loss)
+    classification:
+      enabled: true
+      hidden_dims: [256, 128]
+      dropout: 0.5
+      use_focal_loss: true  # Categorical Focal Loss
+      focal_gamma: 2.0  # Standard value from research
+      focal_alpha: null  # Auto-compute from class frequencies
+  
+  # VAE for unsupervised anomaly detection (ADDED)
+  vae:
+    enabled: true
+    latent_dim: 64
+    hidden_dims: [256, 128]
+    dropout: 0.3
+  
+  # DISABLE Deep SVDD (not useful for 14-class problem)
+  anomaly_head:
+    enabled: false
+
+# Training Configuration (Research-Optimized)
+training:
+  num_epochs: 100
+  batch_size: 64  # Smaller for sequence data
+  gradient_accumulation_steps: 2  # Effective batch = 128
+  
+  # Conservative learning rate (proven stable)
+  learning_rate: 0.0001
+  max_learning_rate: 0.001
+  
+  lr_scheduler:
+    type: "onecycle"
+    T_max: 100
+    eta_min: 0.000001
+    warmup_epochs: 10
+    pct_start: 0.2
+    div_factor: 25
+    final_div_factor: 10000
+  
+  # Optimizer
+  optimizer:
+    type: "adamw"
+    weight_decay: 0.01  # Strong L2 regularization
+    betas: [0.9, 0.999]
+  
+  # Gradient clipping (stability)
+  gradient_clip:
+    enabled: true
+    max_norm: 1.0
+    norm_type: 2
+  
+  # Mixed precision
+  mixed_precision: true
+  
+  # Loss configuration (Research-Based Multi-Task)
+  loss:
+    # Primary: Regression loss (future feature prediction)
+    regression:
+      weight: 1.0
+      type: "smooth_l1"  # Huber loss - robust to outliers
+      reduction: "mean"
+    
+    # Secondary: Focal loss for classification (handles imbalance)
+    classification:
+      weight: 0.5  # Auxiliary task
+      gamma: 2.0
+      alpha: null  # Auto-compute
+      reduction: "mean"
+    
+    # Tertiary: MIL Ranking loss (weakly supervised)
+    mil_ranking:
+      enabled: true
+      weight: 0.3
+      margin: 0.5
+      positive_bag_weight: 3.0  # Emphasize abnormal clips
+    
+    # VAE Loss (unsupervised anomaly detection)
+    vae:
+      weight: 0.3
+      reconstruction_weight: 1.0
+      kl_weight: 0.01  # Beta-VAE style
+      reduction: "mean"
+    
+    # Dynamic weighting for abnormal classes
+    class_weights:
+      enabled: true
+      abnormal_boost: 2.5  # Weight abnormal classes 2.5x higher
+      auto_compute: true
+  
+  # Class balancing (from research)
+  class_balance:
+    method: "weighted_sampling"  # Better than loss weighting alone
+    oversample_minority: true
+    minority_threshold: 8000  # Oversample classes with <8k samples
+    oversample_ratio: 1.5
+  
+  # Early stopping
+  early_stopping:
+    enabled: true
+    patience: 15
+    min_delta: 0.001
+    monitor: "val_f1"  # Focus on F1 for imbalanced data
+  
+  # Model checkpointing
+  checkpointing:
+    save_best_only: false  # Also save periodic checkpoints
+    save_checkpoint_every: 10  # Save checkpoint every 10 epochs
+    monitor: "val_f1"
+    mode: "max"
+    save_last: true
+  
+  # SWA (Stochastic Weight Averaging) - improves generalization
+  swa:
+    enabled: true
+    start_epoch: 60
+    lr: 0.00005
+    anneal_epochs: 10
+  
+  # Disable SAM (conflicts with other optimizations)
+  sam:
+    enabled: false
+  
+  # Model compilation (speed optimization)
+  compile_model:
+    enabled: true
+    mode: "reduce-overhead"
+    fullgraph: false
+
+# Validation Configuration
+validation:
+  frequency: 1
+  metrics: ["accuracy", "f1", "precision", "recall", "auc"]
+  
+  # Test-Time Augmentation (from research)
+  tta:
+    enabled: true
+    num_augmentations: 5
+    augmentation_types: ["horizontal_flip", "slight_rotation", "color_jitter"]
+
+# Logging
+logging:
+  level: "INFO"
+  log_dir: "outputs/logs"
+  save_dir: "outputs"
+  
+  tensorboard:
+    enabled: true
+    log_dir: "outputs/logs/tensorboard"
+  
+  wandb:
+    enabled: true
+    project: "ucf-crime-research-enhanced"
+    entity: null
+    tags: ["regression", "focal-loss", "transformer", "research-based", "vae"]
+  
+  log_frequency: 50
+  log_every_n_steps: 50
+  save_predictions: true
+  
+# Output paths
+output:
+  model_dir: "outputs/models"
+  results_dir: "outputs/results"
+  checkpoint_dir: "outputs/checkpoints"
+
+# Hardware
+device: "cuda"
+num_workers: 8
+pin_memory: true
+deterministic: false  # Faster training
+
+# Hardware configuration
+hardware:
+  device: "cuda"
+  num_workers: 8
+  pin_memory: true
+  prefetch_factor: 2

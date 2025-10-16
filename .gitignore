@@ -1,7 +1,70 @@
-data/raw/Train
-data/raw/Test
-outputs/
+# ========================================
+# Project-Specific Ignores
+# ========================================
 
+# Large dataset directories
+data/raw/Train/
+data/raw/Test/
+data/raw/**/*.avi
+data/raw/**/*.mp4
+data/raw/**/*.mov
+data/processed/
+
+# Training outputs and artifacts
+outputs/
+checkpoints/
+*.pth
+*.pt
+*.ckpt
+*.h5
+*.hdf5
+*.safetensors
+*.filepart
+
+# TensorBoard and experiment tracking
+runs/
+tensorboard/
+wandb/
+mlruns/
+.neptune/
+
+# Training logs
+*.log
+train_*.log
+test_*.log
+eval_*.log
+debug_*.log
+
+# Temporary and backup files
+*.bak
+*.tmp
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Visualization outputs (keep only final ones)
+outputs/visualizations/
+*.png.tmp
+*.jpg.tmp
+
+# Model results and predictions (can be regenerated)
+outputs/results/
+outputs/models/
+predictions_*.npz
+evaluation_report_*.txt
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/
+
+# Legacy documentation (keep only current docs)
+docs/OLD/
+
+# ========================================
+# Python Standard Ignores
+# ========================================
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

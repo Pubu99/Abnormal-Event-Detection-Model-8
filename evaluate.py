@@ -131,10 +131,17 @@ def main():
     
     # Load model
     print(f"\n📦 Loading model from {args.checkpoint}...")
-    checkpoint = torch.load(args.checkpoint, map_location=device)
+    checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
     
     model = create_model(config, device=device)
-    model.load_state_dict(checkpoint['model_state_dict'])
+    
+    # Handle torch.compile() state dict (strip _orig_mod. prefix)
+    state_dict = checkpoint['model_state_dict']
+    if any(key.startswith('_orig_mod.') for key in state_dict.keys()):
+        print("   Detected compiled model, stripping _orig_mod. prefix...")
+        state_dict = {key.replace('_orig_mod.', ''): value for key, value in state_dict.items()}
+    
+    model.load_state_dict(state_dict)
     print("   ✅ Model loaded successfully")
     
     if 'epoch' in checkpoint:
@@ -186,8 +193,8 @@ def main():
             'true_label': targets,
             'predicted_label': predictions,
             'confidence': confidences,
-            'true_class': [config.data.classes[t] for t in targets],
-            'predicted_class': [config.data.classes[p] for p in predictions],
+            'true_class': [config.data.classes[int(t)] for t in targets],
+            'predicted_class': [config.data.classes[int(p)] for p in predictions],
             'correct': np.array(predictions) == np.array(targets)
         })
         
