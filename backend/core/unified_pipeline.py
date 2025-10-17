@@ -14,7 +14,7 @@ from services.motion_analysis import MotionAnalyzer
 from services.pose_estimation import PoseEstimator
 from services.rule_engine import RuleEngine, AlertLevel
 from services.object_tracking import SimpleTracker, SpeedAnalyzer
-from services.intelligent_fusion import IntelligentFusionEngine, AnomalyLevel
+from services.intelligent_fusion import IntelligentFusionEngine
 import cv2
 import numpy as np
 from typing import Dict, List, Optional
@@ -126,7 +126,13 @@ class UnifiedDetectionPipeline:
                     list(self.anomaly_detector.frame_buffer)
                 )
                 pred_result = self.anomaly_detector.predict_sequence(sequence_tensor)
-                ml_prediction = pred_result
+                
+                # Transform for fusion engine (expects 'class' not 'predicted_class')
+                ml_prediction = {
+                    'class': pred_result['predicted_class'],
+                    'confidence': pred_result['confidence'],
+                    'probabilities': pred_result.get('probabilities', [])
+                }
                 
                 result['detections']['ml_model'] = {
                     'predicted_class': pred_result['predicted_class'],
@@ -183,73 +189,108 @@ class UnifiedDetectionPipeline:
             speed_analysis = self.speed_analyzer.analyze(tracking_result.tracked_objects)
             result['detections']['speed'] = speed_analysis
             
-            # 7. Rule Engine - Generate Context-Aware Alerts
-            rule_result = self.rule_engine.evaluate(
-                yolo_detections=yolo_detections,
-                motion_result=result['detections']['motion'],
-                pose_result=result['detections']['pose'],
-                anomaly_class=ml_prediction['predicted_class'] if ml_prediction else None,
-                anomaly_confidence=ml_prediction['confidence'] if ml_prediction else None
-            )
-            
-            # Format alerts
-            alerts = []
-            for alert in rule_result.alerts:
-                alerts.append({
-                    'level': alert.level.value,
-                    'title': alert.title,
-                    'message': alert.message,
-                    'confidence': alert.confidence,
-                    'timestamp': alert.timestamp,
-                    'location': alert.location,
-                    'objects_involved': alert.objects_involved,
-                    'metadata': alert.metadata
-                })
-            
-            result['alerts'] = alerts
-            result['threat_level'] = rule_result.threat_level.value
-            result['is_dangerous'] = rule_result.is_dangerous
-            result['summary'] = rule_result.summary
-            
-            # 8. Intelligent Fusion - Align all detections professionally
-            fusion_result = self.fusion_engine.fuse_detections(
+            # 7. PROFESSIONAL INTELLIGENT FUSION ENGINE
+            # Weighted scoring: ML (40%), YOLO (25%), Pose (20%), Motion (15%)
+            # Anomaly-only reporting: No "Normal" highlights (threshold 0.70)
+            fusion_detection = self.fusion_engine.fuse_detections(
                 ml_result=ml_prediction,
-                yolo_objects=yolo_results['objects'],
+                yolo_detections=yolo_detections,
                 pose_result=result['detections']['pose'],
                 motion_result=result['detections']['motion'],
-                frame_number=len(self.anomaly_detector.frame_buffer),
-                timestamp=result['timestamp']
+                frame_number=len(self.anomaly_detector.frame_buffer)
             )
             
-            # Add fusion results to response
-            result['fusion'] = {
-                'final_decision': fusion_result.final_decision.name,
-                'confidence': fusion_result.confidence,
-                'reasoning': fusion_result.reasoning,
-                'ml_weight': fusion_result.ml_weight,
-                'context_weight': fusion_result.context_weight,
-                'override_applied': fusion_result.override_applied,
-                'score_breakdown': {
-                    'ml_score': fusion_result.ml_score,
-                    'object_score': fusion_result.object_score,
-                    'pose_score': fusion_result.pose_score,
-                    'motion_score': fusion_result.motion_score
+            # ONLY REPORT ANOMALIES (fusion_score >= 0.70)
+            if fusion_detection is None:
+                # Normal scene - no anomaly detected
+                result['fusion'] = None
+                result['anomaly_detected'] = False
+                result['alerts'] = []
+                result['threat_level'] = 'NORMAL'
+                result['is_dangerous'] = False
+                result['summary'] = 'Normal activity - No anomalies detected'
+            else:
+                # ANOMALY DETECTED - Professional fusion result
+                result['fusion'] = {
+                    'anomaly_type': fusion_detection.anomaly_type.value,
+                    'severity': fusion_detection.severity.value,
+                    'fusion_score': round(fusion_detection.fusion_score, 3),
+                    'confidence': round(fusion_detection.confidence, 3),
+                    'reasoning': fusion_detection.reasoning,
+                    'explanation': fusion_detection.explanation,
+                    
+                    # Weighted score breakdown (Professional Display)
+                    'score_breakdown': {
+                        'ml_model': {
+                            'score': round(fusion_detection.ml_score, 3),
+                            'weight': '40%',
+                            'weighted_contribution': round(fusion_detection.ml_score * 0.40, 3)
+                        },
+                        'yolo_objects': {
+                            'score': round(fusion_detection.object_score, 3),
+                            'weight': '25%',
+                            'weighted_contribution': round(fusion_detection.object_score * 0.25, 3)
+                        },
+                        'pose_estimation': {
+                            'score': round(fusion_detection.pose_score, 3),
+                            'weight': '20%',
+                            'weighted_contribution': round(fusion_detection.pose_score * 0.20, 3)
+                        },
+                        'motion_analysis': {
+                            'score': round(fusion_detection.motion_score, 3),
+                            'weight': '15%',
+                            'weighted_contribution': round(fusion_detection.motion_score * 0.15, 3)
+                        }
+                    },
+                    
+                    # Consensus information
+                    'consensus': {
+                        'agreement_count': fusion_detection.consensus_count,
+                        'consensus_bonus': 0.15 if fusion_detection.consensus_count >= 2 else 0.0
+                    },
+                    
+                    # Critical override flag
+                    'critical_override': fusion_detection.critical_override
                 }
-            }
+                
+                # Set threat level based on severity
+                severity_to_threat = {
+                    'CRITICAL': 'CRITICAL',
+                    'HIGH': 'HIGH',
+                    'MEDIUM': 'MEDIUM',
+                    'LOW': 'LOW'
+                }
+                
+                result['anomaly_detected'] = True
+                result['threat_level'] = severity_to_threat.get(fusion_detection.severity.value, 'MEDIUM')
+                result['is_dangerous'] = fusion_detection.severity.value in ['CRITICAL', 'HIGH']
+                result['summary'] = f"{fusion_detection.anomaly_type.value}: {fusion_detection.explanation}"
+                
+                # Format as professional alert
+                result['alerts'] = [{
+                    'level': fusion_detection.severity.value,
+                    'title': fusion_detection.anomaly_type.value,
+                    'message': fusion_detection.explanation,
+                    'confidence': round(fusion_detection.confidence, 3),
+                    'timestamp': fusion_detection.timestamp,
+                    'fusion_score': round(fusion_detection.fusion_score, 3),
+                    'reasoning': fusion_detection.reasoning,
+                    'metadata': {
+                        'frame_number': fusion_detection.frame_number,
+                        'detection_id': fusion_detection.detection_id,
+                        'modalities_agreed': fusion_detection.consensus_count
+                    }
+                }]
             
-            # Override final decision if fusion is more confident
-            if fusion_result.override_applied or fusion_result.confidence > 0.7:
-                result['threat_level'] = fusion_result.final_decision.name
-                result['is_dangerous'] = fusion_result.final_decision.value >= AnomalyLevel.ABNORMAL.value
-            
-            # 9. Create Visualization
+            # 8. Create Professional Visualization
             vis_frame = self._create_visualization(
                 frame,
                 yolo_detections,
                 tracking_result.tracked_objects,
                 pose_result,
                 motion_result,
-                rule_result
+                result.get('alerts', []),
+                fusion_detection
             )
             
             # Encode frame as JPEG base64
@@ -268,31 +309,28 @@ class UnifiedDetectionPipeline:
                             tracked_objects: List,
                             pose_result,
                             motion_result,
-                            rule_result) -> np.ndarray:
-        """Create annotated frame with all detections"""
+                            alerts: List[Dict],
+                            fusion_detection) -> np.ndarray:
+        """Create professional annotated frame with fusion-based detections"""
         
         vis_frame = frame.copy()
         
-        # Draw pose skeletons
-        if pose_result.is_anomalous:
-            vis_frame = self.pose_estimator.draw_pose(vis_frame, pose_result)
-        
-        # Draw tracked objects with bounding boxes
+        # ALWAYS draw YOLO bounding boxes (fast, real-time)
         for obj in tracked_objects:
             x, y, w, h = obj.bbox
             
-            # Color based on class
-            if obj.class_name == 'person':
-                color = (0, 255, 0)  # Green
-            elif obj.class_name in ['knife', 'gun', 'weapon']:
-                color = (0, 0, 255)  # Red
+            # Color based on class and fusion detection
+            if obj.class_name in ['knife', 'gun', 'weapon']:
+                color = (0, 0, 255)  # Red for weapons (CRITICAL)
+            elif obj.class_name == 'person':
+                color = (0, 255, 0)  # Green for people
             else:
-                color = (255, 144, 30)  # Blue
+                color = (255, 144, 30)  # Blue for other objects
             
             # Draw bounding box
             cv2.rectangle(vis_frame, (x, y), (x + w, y + h), color, 2)
             
-            # Draw label with track ID and speed
+            # Draw label with track ID
             label = f"ID:{obj.track_id} {obj.class_name}"
             if obj.speed > 5:
                 label += f" {obj.speed:.1f}px/f"
@@ -302,29 +340,38 @@ class UnifiedDetectionPipeline:
             cv2.rectangle(vis_frame, (x, y - th - 4), (x + tw, y), color, -1)
             cv2.putText(vis_frame, label, (x, y - 4),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-            
-            # Draw trajectory
-            if len(obj.trajectory) > 2:
-                points = np.array(obj.trajectory, dtype=np.int32)
-                cv2.polylines(vis_frame, [points], False, color, 2)
         
-        # Draw motion regions
-        for region in motion_result.motion_regions:
-            x, y, w, h = region
-            cv2.rectangle(vis_frame, (x, y), (x + w, y + h), (0, 255, 255), 1)
-        
-        # Draw alert indicators
-        alert_y = 30
-        for alert in rule_result.alerts:
-            color = self.rule_engine.get_alert_color(alert.level)
+        # ONLY ADD HEAVY PROCESSING IF ANOMALY DETECTED
+        if fusion_detection is not None:
+            # Draw pose skeletons (only for anomalies)
+            if pose_result.is_anomalous:
+                vis_frame = self.pose_estimator.draw_pose(vis_frame, pose_result)
+            alert_y = 30
+            for alert in alerts:
+                # Severity color mapping
+                severity_colors = {
+                    'CRITICAL': (0, 0, 255),      # Red
+                    'HIGH': (0, 128, 255),         # Orange
+                    'MEDIUM': (0, 255, 255),       # Yellow
+                    'LOW': (255, 255, 0)           # Cyan
+                }
+                color = severity_colors.get(alert['level'], (255, 255, 255))
+                
+                # Alert box with fusion score
+                text = f"🚨 {alert['title']} (Score: {alert.get('fusion_score', 0):.2f})"
+                (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+                cv2.rectangle(vis_frame, (10, alert_y), (20 + tw, alert_y + th + 10), color, -1)
+                cv2.putText(vis_frame, text, (15, alert_y + th + 5),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                alert_y += th + 20
             
-            # Alert box
-            text = f"{alert.title} ({alert.confidence*100:.0f}%)"
-            (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-            cv2.rectangle(vis_frame, (10, alert_y), (20 + tw, alert_y + th + 10), color, -1)
-            cv2.putText(vis_frame, text, (15, alert_y + th + 5),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            alert_y += th + 20
+            # Draw fusion score indicator in bottom-right
+            h, w = vis_frame.shape[:2]
+            score_text = f"Fusion: {fusion_detection.fusion_score:.3f}"
+            (tw, th), _ = cv2.getTextSize(score_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+            cv2.rectangle(vis_frame, (w - tw - 20, h - th - 20), (w - 10, h - 10), (0, 0, 0), -1)
+            cv2.putText(vis_frame, score_text, (w - tw - 15, h - 15),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
         
         return vis_frame
     

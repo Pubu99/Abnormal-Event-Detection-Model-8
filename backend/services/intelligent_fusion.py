@@ -71,31 +71,28 @@ class Severity(Enum):
 @dataclass
 class FusedDetection:
     """Professional anomaly detection result"""
-    # Core detection info
+    # Core detection info (required fields first)
     anomaly_type: AnomalyType
     severity: Severity
     confidence: float
     fusion_score: float
-    
-    # Timestamp and location
     timestamp: str
     frame_number: int
     
-    # Individual modality scores (for transparency)
+    # Individual modality scores (required - for transparency)
     ml_score: float
     object_score: float
     pose_score: float
     motion_score: float
     
-    # Supporting evidence
+    # Optional fields with defaults
+    detection_id: str = ""
     detected_objects: List[str] = field(default_factory=list)
     bounding_boxes: List[Tuple[int, int, int, int]] = field(default_factory=list)
-    
-    # Explanation for user
+    consensus_count: int = 0
+    critical_override: bool = False
     explanation: str = ""
     reasoning: List[str] = field(default_factory=list)
-    
-    # Metadata
     metadata: Dict = field(default_factory=dict)
     
     def to_dict(self) -> Dict:
@@ -155,6 +152,7 @@ class IntelligentFusionEngine:
         """Initialize fusion engine"""
         self.detection_history: List[FusedDetection] = []
         self.frame_count = 0
+        self.detection_counter = 0  # For unique IDs
         
         # Severity mapping for all anomaly types
         self.severity_map = {
@@ -214,8 +212,14 @@ class IntelligentFusionEngine:
             'Arrest': AnomalyType.ARREST,
             'RoadAccidents': AnomalyType.ROAD_ACCIDENTS,
             'Shoplifting': AnomalyType.SHOPLIFTING,
-            'Stealing': AnomalyType.STEALING
+            'Stealing': AnomalyType.STEALING,
         }
+    
+    def _generate_detection_id(self) -> str:
+        """Generate unique detection ID"""
+        self.detection_counter += 1
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        return f"DET_{timestamp}_{self.detection_counter:04d}"
     
     def fuse_detections(self,
                        ml_result: Optional[Dict],
@@ -332,6 +336,7 @@ class IntelligentFusionEngine:
         
         # Create fused detection
         detection = FusedDetection(
+            detection_id=self._generate_detection_id(),
             anomaly_type=anomaly_type,
             severity=severity,
             confidence=max(ml_score, object_score, pose_score, motion_score),
@@ -344,6 +349,8 @@ class IntelligentFusionEngine:
             motion_score=motion_score,
             detected_objects=detected_objects,
             bounding_boxes=bounding_boxes,
+            consensus_count=active_modalities,
+            critical_override=False,
             explanation=explanation,
             reasoning=reasoning,
             metadata=metadata
@@ -383,6 +390,7 @@ class IntelligentFusionEngine:
         
         # Create immediate CRITICAL detection
         return FusedDetection(
+            detection_id=self._generate_detection_id(),
             anomaly_type=anomaly_type,
             severity=Severity.CRITICAL,
             confidence=0.99,
@@ -395,6 +403,8 @@ class IntelligentFusionEngine:
             motion_score=0.0,
             detected_objects=detected_classes,
             bounding_boxes=[obj.get('bbox', (0,0,0,0)) for obj in yolo_detections],
+            consensus_count=1,
+            critical_override=True,
             explanation=explanation,
             reasoning=["🚨 CRITICAL OVERRIDE: Dangerous object detected"],
             metadata={'override': True, 'critical_objects': critical_found}

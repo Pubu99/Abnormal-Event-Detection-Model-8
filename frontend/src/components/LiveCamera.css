@@ -1,0 +1,117 @@
+/* Professional animations for LiveCamera component */
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -1000px 0;
+  }
+  100% {
+    background-position: 1000px 0;
+  }
+}
+
+.animate-slideIn {
+  animation: slideIn 0.3s ease-out forwards;
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.5s ease-out forwards;
+}
+
+.animate-pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Smooth transitions for hover effects */
+.hover\:scale-102:hover {
+  transform: scale(1.02);
+}
+
+/* Custom scrollbar styles */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+}
+
+.scrollbar-thumb-gray-700::-webkit-scrollbar-thumb {
+  background-color: rgb(55, 65, 81);
+  border-radius: 3px;
+}
+
+.scrollbar-track-gray-800::-webkit-scrollbar-track {
+  background-color: rgb(31, 41, 55);
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(75, 85, 99);
+}
+
+/* Gradient loading shimmer */
+.loading-shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(55, 65, 81, 0.1) 0%,
+    rgba(75, 85, 99, 0.3) 50%,
+    rgba(55, 65, 81, 0.1) 100%
+  );
+  background-size: 1000px 100%;
+  animation: shimmer 2s infinite;
+}
+
+/* Smooth height transitions */
+.transition-max-height {
+  transition: max-height 0.3s ease-in-out, opacity 0.3s ease-in-out;
+}
+
+/* Professional shadow effects */
+.shadow-glow-red {
+  box-shadow: 0 0 15px rgba(239, 68, 68, 0.3);
+}
+
+.shadow-glow-yellow {
+  box-shadow: 0 0 15px rgba(234, 179, 8, 0.3);
+}
+
+.shadow-glow-blue {
+  box-shadow: 0 0 15px rgba(59, 130, 246, 0.3);
+}
+
+/* Micro-interactions */
+button:active {
+  transform: scale(0.98);
+}
+
+/* Responsive grid adjustments */
+@media (max-width: 1024px) {
+  .grid-cols-1.lg\:grid-cols-12 {
+    grid-template-columns: 1fr;
+  }
+}

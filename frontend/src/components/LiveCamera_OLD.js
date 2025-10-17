@@ -1,12 +1,10 @@
 import React, { useState, useRef, useEffect } from "react";
-import "./LiveCamera.css"; // Professional animations and styles
 
 function LiveCamera({ onDetection }) {
   const [isStreaming, setIsStreaming] = useState(false);
   const [cameraActive, setCameraActive] = useState(false);
   const [currentResult, setCurrentResult] = useState(null);
   const [detectionHistory, setDetectionHistory] = useState([]);
-  const [eventLog, setEventLog] = useState([]); // full event log (all frames)
   const [fps, setFps] = useState(0);
   const [statusMessage, setStatusMessage] = useState("");
 
@@ -15,14 +13,6 @@ function LiveCamera({ onDetection }) {
   const [savedScreenshots, setSavedScreenshots] = useState([]); // Auto-saved screenshots
   const [fusionReasoning, setFusionReasoning] = useState([]); // Intelligent fusion reasoning
   const [showLegend, setShowLegend] = useState(true); // Color legend visibility
-  const [showAdvanced, setShowAdvanced] = useState(false); // hide model details by default
-
-  // PRO UI/UX enhancements
-  const [severityFilter, setSeverityFilter] = useState("ALL"); // Filter: ALL, CRITICAL, HIGH, MEDIUM, LOW
-  const [showInfoPanel, setShowInfoPanel] = useState(true); // Toggle panel on mobile
-  const [pageSize, setPageSize] = useState(10); // Pagination
-  const [currentPage, setCurrentPage] = useState(0); // Current page for anomaly list
-  const [isLoadingHistory, setIsLoadingHistory] = useState(false); // Loading state for backend fetch
 
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -48,61 +38,6 @@ function LiveCamera({ onDetection }) {
       }
     };
   }, []);
-
-  // PRO: Fetch persisted detection history from backend on mount
-  useEffect(() => {
-    fetchDetectionHistory();
-  }, []);
-
-  const fetchDetectionHistory = async () => {
-    setIsLoadingHistory(true);
-    try {
-      const response = await fetch(
-        "http://localhost:8000/api/detections/history"
-      );
-      if (response.ok) {
-        const data = await response.json();
-        console.log("📥 Loaded detection history from backend:", data);
-
-        // Backend returns { detections: [...] }
-        if (data.detections && Array.isArray(data.detections)) {
-          const formattedHistory = data.detections.map((d) => ({
-            timestamp: new Date(d.timestamp),
-            frame_number: d.frame_number,
-            anomaly_type: d.anomaly_type,
-            severity: d.severity,
-            fusion_score: d.fusion_score,
-            confidence: d.confidence,
-            explanation: d.explanation,
-          }));
-          setDetectionHistory(formattedHistory);
-        }
-      }
-    } catch (error) {
-      console.error("❌ Failed to fetch detection history:", error);
-    } finally {
-      setIsLoadingHistory(false);
-    }
-  };
-
-  const clearDetectionHistory = async () => {
-    try {
-      const response = await fetch(
-        "http://localhost:8000/api/detections/clear",
-        {
-          method: "POST",
-        }
-      );
-      if (response.ok) {
-        console.log("✅ Detection history cleared on backend");
-        setDetectionHistory([]);
-        setEventLog([]);
-        setCurrentPage(0);
-      }
-    } catch (error) {
-      console.error("❌ Failed to clear detection history:", error);
-    }
-  };
 
   const startWebcam = async () => {
     try {
@@ -419,8 +354,7 @@ function LiveCamera({ onDetection }) {
       fusion_decision: data.fusion?.final_decision || null,
     };
 
-    // keep a full event log separate from anomaly-only detectionHistory
-    setEventLog((prev) => [historyEntry, ...prev].slice(0, 200));
+    setDetectionHistory((prev) => [historyEntry, ...prev].slice(0, 50));
 
     // NEW: Auto-capture screenshot for ANY anomaly (not just critical)
     const shouldCapture =
@@ -784,314 +718,252 @@ function LiveCamera({ onDetection }) {
         </div>
       )}
 
-      {/* Split layout: video left, info panel right */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        <div className="lg:col-span-8">
-          {/* Video Display with Overlay */}
-          <div
-            className="relative bg-black rounded-lg overflow-hidden"
-            style={{ minHeight: "400px" }}
-          >
-            {/* Video Element */}
-            <video
-              ref={videoRef}
-              autoPlay
-              muted
-              playsInline
-              className="w-full h-full object-contain"
-            />
+      {/* Video Display with Overlay */}
+      <div
+        className="relative bg-black rounded-lg overflow-hidden"
+        style={{ minHeight: "400px" }}
+      >
+        {/* Video Element */}
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted
+          style={{
+            width: "100%",
+            height: "100%",
+            display: cameraActive ? "block" : "none",
+          }}
+          className="object-contain"
+        />
 
-            {/* Hidden capture canvas used to send frames */}
-            <canvas ref={canvasRef} style={{ display: "none" }} />
+        {/* Overlay Canvas for Bounding Boxes */}
+        <canvas
+          ref={overlayCanvasRef}
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: "100%",
+            height: "100%",
+            pointerEvents: "none",
+            display: cameraActive ? "block" : "none",
+          }}
+          className="object-contain"
+        />
 
-            {/* Overlay canvas for bounding boxes and indicators */}
-            <canvas
-              ref={overlayCanvasRef}
-              className="absolute top-0 left-0 w-full h-full pointer-events-none"
-            />
-          </div>
+        {/* Hidden Canvas for Frame Capture */}
+        <canvas ref={canvasRef} style={{ display: "none" }} />
 
-          {/* Mobile toggle button for info panel */}
-          <div className="lg:hidden mt-2">
-            <button
-              onClick={() => setShowInfoPanel(!showInfoPanel)}
-              className="w-full bg-gray-800 text-white py-2 px-4 rounded-lg flex items-center justify-between hover:bg-gray-700 transition-all"
-            >
-              <span className="font-semibold">
-                {showInfoPanel ? "Hide" : "Show"} Detection Panel
-              </span>
-              <span className="text-xl">{showInfoPanel ? "▲" : "▼"}</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Right-side info panel: always visible on desktop, collapsible on mobile */}
-        <div
-          className={`lg:col-span-4 transition-all duration-300 ease-in-out ${
-            showInfoPanel ? "block" : "hidden lg:block"
-          }`}
-        >
-          <div className="bg-gradient-to-br from-gray-900 to-gray-800 text-white rounded-lg shadow-2xl p-4 h-full flex flex-col border border-gray-700">
-            {/* Header with clear button */}
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center space-x-2">
-                <div
-                  className={`w-2 h-2 rounded-full ${
-                    isStreaming ? "bg-red-500 animate-pulse" : "bg-gray-500"
-                  }`}
-                ></div>
-                <h3 className="text-lg font-bold">Detections</h3>
-              </div>
-              <div className="flex items-center space-x-2">
-                <div className="text-xs text-gray-400 bg-gray-800 px-2 py-1 rounded">
-                  {isStreaming ? "Live" : "Idle"}
-                </div>
-                {detectionHistory.length > 0 && (
-                  <button
-                    onClick={clearDetectionHistory}
-                    className="text-xs text-red-400 hover:text-red-300 bg-red-900 bg-opacity-30 px-2 py-1 rounded transition-colors"
-                    title="Clear all detections"
-                  >
-                    Clear
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Severity Filter Tabs */}
-            <div className="flex space-x-1 mb-3 bg-gray-800 p-1 rounded-lg">
-              {["ALL", "CRITICAL", "HIGH", "MEDIUM", "LOW"].map((filter) => (
-                <button
-                  key={filter}
-                  onClick={() => {
-                    setSeverityFilter(filter);
-                    setCurrentPage(0);
-                  }}
-                  className={`flex-1 px-2 py-1 text-xs font-semibold rounded transition-all ${
-                    severityFilter === filter
-                      ? filter === "CRITICAL"
-                        ? "bg-red-600 text-white"
-                        : filter === "HIGH"
-                        ? "bg-orange-600 text-white"
-                        : filter === "MEDIUM"
-                        ? "bg-yellow-600 text-white"
-                        : filter === "LOW"
-                        ? "bg-blue-600 text-white"
-                        : "bg-gray-600 text-white"
-                      : "text-gray-400 hover:text-white"
-                  }`}
-                >
-                  {filter}
-                </button>
-              ))}
-            </div>
-
-            {/* Priority area: Anomalies list with animations */}
-            <div className="flex-1 overflow-auto space-y-2 scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-gray-800">
-              {isLoadingHistory ? (
-                <div className="flex items-center justify-center h-full">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-                </div>
-              ) : (
-                (() => {
-                  const filteredDetections = detectionHistory.filter((d) =>
-                    severityFilter === "ALL"
-                      ? true
-                      : d.severity === severityFilter
-                  );
-                  const paginatedDetections = filteredDetections.slice(
-                    currentPage * pageSize,
-                    (currentPage + 1) * pageSize
-                  );
-
-                  return paginatedDetections.length > 0 ? (
-                    <>
-                      {paginatedDetections.map((d, idx) => {
-                        const getSeverityColorClass = (severity) => {
-                          switch (severity) {
-                            case "CRITICAL":
-                              return "border-l-4 border-red-500 bg-gradient-to-r from-red-900 to-gray-800";
-                            case "HIGH":
-                              return "border-l-4 border-orange-500 bg-gradient-to-r from-orange-900 to-gray-800";
-                            case "MEDIUM":
-                              return "border-l-4 border-yellow-500 bg-gradient-to-r from-yellow-900 to-gray-800";
-                            case "LOW":
-                              return "border-l-4 border-blue-500 bg-gradient-to-r from-blue-900 to-gray-800";
-                            default:
-                              return "border-l-4 border-gray-500 bg-gradient-to-r from-gray-700 to-gray-800";
-                          }
-                        };
-
-                        const getSeverityIcon = (severity) => {
-                          switch (severity) {
-                            case "CRITICAL":
-                              return "🚨";
-                            case "HIGH":
-                              return "⚠️";
-                            case "MEDIUM":
-                              return "⚡";
-                            case "LOW":
-                              return "ℹ️";
-                            default:
-                              return "📍";
-                          }
-                        };
-
-                        return (
-                          <div
-                            key={idx}
-                            className={`p-3 rounded-lg ${getSeverityColorClass(
-                              d.severity
-                            )} transform transition-all duration-300 hover:scale-102 hover:shadow-lg animate-slideIn`}
-                            style={{ animationDelay: `${idx * 50}ms` }}
-                          >
-                            <div className="flex items-start justify-between">
-                              <div className="flex-1">
-                                <div className="flex items-center space-x-2 mb-1">
-                                  <span className="text-lg">
-                                    {getSeverityIcon(d.severity)}
-                                  </span>
-                                  <div className="text-sm font-bold text-white">
-                                    {d.anomaly_type}
-                                  </div>
-                                </div>
-                                <div className="text-xs text-gray-300">
-                                  {new Date(d.timestamp).toLocaleString()}
-                                </div>
-                                <div className="flex items-center space-x-2 mt-2">
-                                  <div className="text-xs text-gray-400">
-                                    Score:
-                                  </div>
-                                  <div className="flex-1 bg-gray-700 rounded-full h-2 overflow-hidden">
-                                    <div
-                                      className={`h-full transition-all duration-500 ${
-                                        d.fusion_score > 0.85
-                                          ? "bg-red-500"
-                                          : d.fusion_score > 0.75
-                                          ? "bg-orange-500"
-                                          : "bg-yellow-500"
-                                      }`}
-                                      style={{
-                                        width: `${d.fusion_score * 100}%`,
-                                      }}
-                                    ></div>
-                                  </div>
-                                  <div className="text-xs font-semibold text-white">
-                                    {(d.fusion_score * 100).toFixed(1)}%
-                                  </div>
-                                </div>
-                              </div>
-                              <div className="ml-2">
-                                <div
-                                  className={`px-2 py-1 rounded text-xs font-bold ${
-                                    d.severity === "CRITICAL"
-                                      ? "bg-red-600 text-white"
-                                      : d.severity === "HIGH"
-                                      ? "bg-orange-600 text-white"
-                                      : d.severity === "MEDIUM"
-                                      ? "bg-yellow-600 text-white"
-                                      : "bg-blue-600 text-white"
-                                  }`}
-                                >
-                                  {d.severity}
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-
-                      {/* Pagination controls */}
-                      {filteredDetections.length > pageSize && (
-                        <div className="flex items-center justify-between pt-2 border-t border-gray-700 mt-2">
-                          <button
-                            onClick={() =>
-                              setCurrentPage((p) => Math.max(0, p - 1))
-                            }
-                            disabled={currentPage === 0}
-                            className="px-3 py-1 text-xs bg-gray-700 text-white rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-600 transition-colors"
-                          >
-                            ← Prev
-                          </button>
-                          <div className="text-xs text-gray-400">
-                            Page {currentPage + 1} of{" "}
-                            {Math.ceil(filteredDetections.length / pageSize)}
-                          </div>
-                          <button
-                            onClick={() => setCurrentPage((p) => p + 1)}
-                            disabled={
-                              (currentPage + 1) * pageSize >=
-                              filteredDetections.length
-                            }
-                            className="px-3 py-1 text-xs bg-gray-700 text-white rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-600 transition-colors"
-                          >
-                            Next →
-                          </button>
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    <div className="flex items-center justify-center h-full text-gray-400">
-                      <div className="text-center animate-fadeIn">
-                        <div className="text-4xl mb-2">👁️</div>
-                        <div className="text-lg font-semibold">
-                          {severityFilter === "ALL"
-                            ? "No anomalies"
-                            : `No ${severityFilter} anomalies`}
-                        </div>
-                        <div className="text-xs mt-1">
-                          System monitoring - all clear
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })()
-              )}
-            </div>
-
-            {/* Footer area: compact controls + advanced collapse */}
-            <div className="mt-4 pt-3 border-t border-gray-700">
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-xs text-gray-400">
-                  {detectionHistory.length} total detections
-                </div>
-                <button
-                  onClick={() => setShowAdvanced(!showAdvanced)}
-                  className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
-                >
-                  {showAdvanced ? "Hide" : "Advanced"} ▾
-                </button>
-              </div>
-
-              <div
-                className={`transition-all duration-300 ease-in-out overflow-hidden ${
-                  showAdvanced ? "max-h-40 opacity-100" : "max-h-0 opacity-0"
-                }`}
+        {/* Placeholder when camera not active */}
+        {!cameraActive && (
+          <div className="w-full h-full flex items-center justify-center text-gray-500 min-h-[400px]">
+            <div className="text-center">
+              <svg
+                className="w-24 h-24 mx-auto mb-4 opacity-50"
+                fill="currentColor"
+                viewBox="0 0 20 20"
               >
-                <div className="mt-2 text-xs text-gray-300 space-y-1 bg-gray-800 bg-opacity-50 p-2 rounded">
-                  <div className="flex justify-between">
-                    <span>Model:</span>
-                    <span className="text-gray-400">EfficientNet + BiLSTM</span>
+                <path d="M2 6a2 2 0 012-2h6a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V6zM14.553 7.106A1 1 0 0014 8v4a1 1 0 00.553.894l2 1A1 1 0 0018 13V7a1 1 0 00-1.447-.894l-2 1z" />
+              </svg>
+              <p className="text-lg">No camera connected</p>
+              <p className="text-sm mt-2">Click "Connect Webcam" to start</p>
+            </div>
+          </div>
+        )}
+
+        {/* PROFESSIONAL FUSION-BASED DETECTION OVERLAY (ANOMALY-ONLY) */}
+        {currentResult &&
+          isStreaming &&
+          currentResult.anomaly_detected &&
+          currentResult.fusion && (
+            <div className="absolute bottom-4 left-4 right-4 bg-black bg-opacity-95 text-white p-4 rounded-lg shadow-2xl border-2 border-red-500">
+              {/* MAIN ANOMALY ALERT */}
+              <div className="grid grid-cols-3 gap-4 mb-3">
+                {/* Anomaly Type */}
+                <div>
+                  <p className="text-xs text-gray-400">🚨 ANOMALY DETECTED</p>
+                  <p className="text-lg font-bold text-red-400">
+                    {currentResult.fusion.anomaly_type}
+                  </p>
+                  <p className="text-xs text-gray-400 mt-1">
+                    {currentResult.timestamp.toLocaleTimeString()}
+                  </p>
+                </div>
+
+                {/* Fusion Score */}
+                <div className="text-center">
+                  <p className="text-xs text-gray-400">Fusion Score</p>
+                  <p
+                    className={`text-2xl font-bold ${
+                      currentResult.fusion.fusion_score > 0.85
+                        ? "text-red-400"
+                        : currentResult.fusion.fusion_score > 0.75
+                        ? "text-orange-400"
+                        : "text-yellow-400"
+                    }`}
+                  >
+                    {(currentResult.fusion.fusion_score * 100).toFixed(1)}%
+                  </p>
+                  <p className="text-xs text-gray-400">
+                    {currentResult.fusion.consensus.agreement_count}/4 agreed
+                  </p>
+                </div>
+
+                {/* Severity Level */}
+                <div className="text-right">
+                  <p className="text-xs text-gray-400">Severity</p>
+                  <p
+                    className={`text-lg font-bold ${
+                      currentResult.fusion.severity === "CRITICAL"
+                        ? "text-red-500"
+                        : currentResult.fusion.severity === "HIGH"
+                        ? "text-orange-500"
+                        : currentResult.fusion.severity === "MEDIUM"
+                        ? "text-yellow-500"
+                        : "text-blue-500"
+                    }`}
+                  >
+                    🚨 {currentResult.fusion.severity}
+                  </p>
+                </div>
+              </div>
+
+              {/* FUSION SCORE BREAKDOWN (Professional Weighted Display) */}
+              <div className="mt-3 pt-3 border-t border-gray-700">
+                <p className="text-xs text-gray-400 mb-2">
+                  Multi-Modal Analysis:
+                </p>
+                <div className="grid grid-cols-4 gap-2 text-xs">
+                  <div className="bg-purple-900 bg-opacity-30 p-2 rounded">
+                    <p className="text-gray-400">ML Model (40%)</p>
+                    <p className="font-bold text-purple-300">
+                      {(
+                        currentResult.fusion.score_breakdown.ml_model.score *
+                        100
+                      ).toFixed(0)}
+                      %
+                    </p>
                   </div>
-                  <div className="flex justify-between">
-                    <span>Frames:</span>
-                    <span className="text-gray-400">
-                      {currentResult?.frame_number || 0}
-                    </span>
+                  <div className="bg-blue-900 bg-opacity-30 p-2 rounded">
+                    <p className="text-gray-400">YOLO (25%)</p>
+                    <p className="font-bold text-blue-300">
+                      {(
+                        currentResult.fusion.score_breakdown.yolo_objects
+                          .score * 100
+                      ).toFixed(0)}
+                      %
+                    </p>
                   </div>
-                  <div className="flex justify-between">
-                    <span>Threshold:</span>
-                    <span className="text-gray-400">70%</span>
+                  <div className="bg-green-900 bg-opacity-30 p-2 rounded">
+                    <p className="text-gray-400">Pose (20%)</p>
+                    <p className="font-bold text-green-300">
+                      {(
+                        currentResult.fusion.score_breakdown.pose_estimation
+                          .score * 100
+                      ).toFixed(0)}
+                      %
+                    </p>
                   </div>
-                  <div className="flex justify-between">
-                    <span>FPS:</span>
-                    <span className="text-gray-400">{fps}</span>
+                  <div className="bg-yellow-900 bg-opacity-30 p-2 rounded">
+                    <p className="text-gray-400">Motion (15%)</p>
+                    <p className="font-bold text-yellow-300">
+                      {(
+                        currentResult.fusion.score_breakdown.motion_analysis
+                          .score * 100
+                      ).toFixed(0)}
+                      %
+                    </p>
                   </div>
                 </div>
               </div>
+
+              {/* Enhanced Detection Info */}
+              <div className="mt-3 pt-3 border-t border-gray-700 grid grid-cols-4 gap-2 text-xs">
+                {/* Objects Tracked */}
+                <div>
+                  <p className="text-gray-400">Tracked</p>
+                  <p className="font-semibold">
+                    {currentResult.tracking?.total_tracks || 0} objects
+                  </p>
+                </div>
+
+                {/* Motion Status */}
+                <div>
+                  <p className="text-gray-400">Motion</p>
+                  <p
+                    className={`font-semibold ${
+                      currentResult.motion?.is_unusual
+                        ? "text-yellow-400"
+                        : "text-green-400"
+                    }`}
+                  >
+                    {currentResult.motion?.is_unusual
+                      ? "⚠ Unusual"
+                      : "✓ Normal"}
+                  </p>
+                </div>
+
+                {/* Pose Status */}
+                <div>
+                  <p className="text-gray-400">Pose</p>
+                  <p
+                    className={`font-semibold ${
+                      currentResult.pose?.is_anomalous
+                        ? "text-orange-400"
+                        : "text-green-400"
+                    }`}
+                  >
+                    {currentResult.pose?.is_anomalous
+                      ? "⚠ Anomaly"
+                      : "✓ Normal"}
+                  </p>
+                </div>
+
+                {/* Active Alerts */}
+                <div>
+                  <p className="text-gray-400">Alerts</p>
+                  <p
+                    className={`font-semibold ${
+                      (currentResult.alerts?.length || 0) > 0
+                        ? "text-red-400"
+                        : "text-green-400"
+                    }`}
+                  >
+                    {(currentResult.alerts?.length || 0) > 0
+                      ? `🔔 ${currentResult.alerts.length}`
+                      : "✓ None"}
+                  </p>
+                </div>
+              </div>
+
+              {/* FUSION REASONING (Professional Explanation) */}
+              {fusionReasoning && fusionReasoning.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-gray-700">
+                  <p className="text-xs text-gray-400 mb-2">
+                    🧠 Intelligent Fusion Reasoning:
+                  </p>
+                  <div className="space-y-1">
+                    {fusionReasoning.slice(0, 4).map((reason, idx) => (
+                      <div
+                        key={idx}
+                        className="text-xs bg-gray-800 bg-opacity-50 p-2 rounded"
+                      >
+                        <p className="text-gray-200">{reason}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Explanation */}
+              <div className="mt-3 pt-3 border-t border-gray-700">
+                <p className="text-xs text-gray-300">
+                  {currentResult.fusion.explanation}
+                </p>
+              </div>
             </div>
-          </div>
-        </div>
+          )}
       </div>
 
       {/* Control Buttons */}
@@ -1449,12 +1321,12 @@ function LiveCamera({ onDetection }) {
         </div>
       )}
 
-      {/* Detection History (full) */}
-      {eventLog.length > 0 && (
+      {/* Detection History */}
+      {detectionHistory.length > 0 && (
         <div className="bg-white rounded-lg shadow p-4">
           <h3 className="text-lg font-semibold mb-3">Detection Log</h3>
           <div className="space-y-2 max-h-96 overflow-y-auto">
-            {eventLog.map((entry, idx) => (
+            {detectionHistory.map((entry, idx) => (
               <div
                 key={idx}
                 className={`p-3 rounded border-l-4 ${

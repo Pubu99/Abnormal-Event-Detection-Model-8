@@ -274,55 +274,66 @@ async def websocket_stream(websocket: WebSocket):
                     })
                     continue
                 
-                # Format response for frontend with safe access
+                # PROFESSIONAL FUSION-BASED RESPONSE
+                # Only send when anomaly detected (fusion_score >= 0.70)
+                fusion_data = result.get('fusion', None)
+                
                 response = {
                     "type": "prediction",
                     "timestamp": result.get('timestamp', datetime.now().isoformat()),
                     "frame_number": frame_count,
+                    "anomaly_detected": result.get('anomaly_detected', False),
                     "data": {
-                        # ML Model predictions
-                        "predicted_class": result['detections'].get('ml_model', {}).get('predicted_class', 'Processing...'),
-                        "confidence": result['detections'].get('ml_model', {}).get('confidence', 0.0),
-                        "is_anomaly": result['detections'].get('ml_model', {}).get('is_anomaly', False),
-                        "top3": result['detections'].get('ml_model', {}).get('top_3', []),
+                        # FUSION ENGINE RESULTS (Primary)
+                        "fusion": fusion_data,
                         
-                        # YOLO detections
-                        "objects_detected": result['detections'].get('yolo', {}).get('objects', []),
-                        "total_objects": result['detections'].get('yolo', {}).get('count', 0),
-                        "dangerous_objects": result['detections'].get('yolo', {}).get('dangerous_objects', False),
+                        # Professional threat assessment
+                        "threat_level": result.get('threat_level', 'NORMAL'),
+                        "is_dangerous": result.get('is_dangerous', False),
+                        "summary": result.get('summary', 'Normal activity'),
+                        "alerts": result.get('alerts', []),
                         
-                        # Motion analysis
+                        # ML Model (for reference)
+                        "ml_model": {
+                            "predicted_class": result['detections'].get('ml_model', {}).get('predicted_class', 'Processing...'),
+                            "confidence": result['detections'].get('ml_model', {}).get('confidence', 0.0),
+                            "is_anomaly": result['detections'].get('ml_model', {}).get('is_anomaly', False),
+                            "top3": result['detections'].get('ml_model', {}).get('top_3', [])
+                        },
+                        
+                        # YOLO detections (for reference)
+                        "yolo": {
+                            "objects_detected": result['detections'].get('yolo', {}).get('objects', []),
+                            "total_objects": result['detections'].get('yolo', {}).get('count', 0),
+                            "dangerous_objects": result['detections'].get('yolo', {}).get('dangerous_objects', False)
+                        },
+                        
+                        # Motion analysis (for reference)
                         "motion": {
                             "magnitude": result['detections'].get('motion', {}).get('magnitude', 0.0),
                             "is_unusual": result['detections'].get('motion', {}).get('is_unusual', False),
                             "anomaly_type": result['detections'].get('motion', {}).get('anomaly_type', None)
                         },
                         
-                        # Pose estimation
+                        # Pose estimation (for reference)
                         "pose": {
                             "persons_detected": result['detections'].get('pose', {}).get('persons_detected', 0),
                             "is_anomalous": result['detections'].get('pose', {}).get('is_anomalous', False),
                             "anomaly_type": result['detections'].get('pose', {}).get('anomaly_type', None)
                         },
                         
-                        # Tracking
+                        # Tracking (for reference)
                         "tracking": {
                             "total_tracks": result['detections'].get('tracking', {}).get('total_tracks', 0),
                             "tracked_objects": result['detections'].get('tracking', {}).get('tracked_objects', [])
                         },
-                        
-                        # Rule-based alerts
-                        "alerts": result.get('alerts', []),
-                        "threat_level": result.get('threat_level', 'INFO'),
-                        "is_dangerous": result.get('is_dangerous', False),
-                        "summary": result.get('summary', 'No alerts'),
                         
                         # Annotated frame
                         "frame_base64": result.get('frame_base64', '')
                     }
                 }
                 
-                # Send comprehensive result
+                # Send comprehensive fusion-based result
                 await websocket.send_json(response)
                         
     except Exception as e:
@@ -356,6 +367,108 @@ async def delete_upload(filename: str):
     try:
         filepath.unlink()
         return {"success": True, "message": f"Deleted {filename}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/detections/history")
+async def get_detection_history(limit: int = 50):
+    """
+    Get detection history from fusion engine.
+    
+    Args:
+        limit: Maximum number of detections to return (default: 50)
+        
+    Returns:
+        List of recent anomaly detections with timestamps
+    """
+    if unified_pipeline is None:
+        raise HTTPException(status_code=503, detail="Pipeline not initialized")
+    
+    try:
+        history = unified_pipeline.fusion_engine.get_detection_history(limit=limit)
+        
+        # Format history for frontend
+        formatted_history = []
+        for detection in history:
+            formatted_history.append({
+                "detection_id": detection.detection_id,
+                "timestamp": detection.timestamp,
+                "frame_number": detection.frame_number,
+                "anomaly_type": detection.anomaly_type.value,
+                "severity": detection.severity.value,
+                "fusion_score": round(detection.fusion_score, 3),
+                "confidence": round(detection.confidence, 3),
+                "explanation": detection.explanation,
+                "reasoning": detection.reasoning,
+                "score_breakdown": {
+                    "ml_score": round(detection.ml_score, 3),
+                    "object_score": round(detection.object_score, 3),
+                    "pose_score": round(detection.pose_score, 3),
+                    "motion_score": round(detection.motion_score, 3)
+                }
+            })
+        
+        return {
+            "success": True,
+            "total_detections": len(formatted_history),
+            "detections": formatted_history
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/detections/statistics")
+async def get_detection_statistics():
+    """
+    Get comprehensive detection statistics from fusion engine.
+    
+    Returns:
+        Statistics including total detections, anomaly rate, severity distribution
+    """
+    if unified_pipeline is None:
+        raise HTTPException(status_code=503, detail="Pipeline not initialized")
+    
+    try:
+        stats = unified_pipeline.fusion_engine.get_statistics()
+        
+        return {
+            "success": True,
+            "statistics": {
+                "total_detections": stats['total_detections'],
+                "frames_processed": stats['frames_processed'],
+                "anomaly_rate_percent": round(stats['anomaly_rate'] * 100, 2),
+                "average_confidence": round(stats['avg_confidence'], 3),
+                "average_fusion_score": round(stats['avg_fusion_score'], 3),
+                "by_severity": stats['by_severity'],
+                "by_anomaly_type": stats['by_type'],
+                "critical_overrides": sum(1 for d in unified_pipeline.fusion_engine.detection_history 
+                                        if d.critical_override),
+                "consensus_detections": sum(1 for d in unified_pipeline.fusion_engine.detection_history 
+                                           if d.consensus_count >= 2)
+            }
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/detections/clear")
+async def clear_detection_history():
+    """Clear detection history (useful for testing/debugging)."""
+    if unified_pipeline is None:
+        raise HTTPException(status_code=503, detail="Pipeline not initialized")
+    
+    try:
+        unified_pipeline.fusion_engine.detection_history.clear()
+        unified_pipeline.fusion_engine.frames_processed = 0
+        
+        return {
+            "success": True,
+            "message": "Detection history cleared"
+        }
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
