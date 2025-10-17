@@ -63,6 +63,10 @@ class MotionAnalyzer:
         self.motion_history = []
         self.history_size = 30  # 30 frames
         
+        # Statistical anomaly detection (Z-score)
+        self.enable_statistical_detection = True
+        self.z_score_threshold = 3.0  # 3 standard deviations
+        
         # Stationary object tracking
         self.stationary_objects = {}  # {region_id: (bbox, start_time, frames_count)}
         
@@ -131,10 +135,23 @@ class MotionAnalyzer:
         if len(self.motion_history) > self.history_size:
             self.motion_history.pop(0)
         
-        # 6. Anomaly Detection
+        # 6. Statistical Anomaly Detection (Z-score)
+        statistical_anomaly, z_score = self._detect_statistical_anomaly(avg_magnitude)
+        
+        # 7. Rule-based Anomaly Detection
         is_unusual, anomaly_type, confidence = self._detect_anomaly(
             avg_magnitude, motion_regions, magnitude
         )
+        
+        # 8. Combine statistical and rule-based detection
+        if statistical_anomaly and not is_unusual:
+            # Statistical outlier but not rule-based anomaly
+            is_unusual = True
+            anomaly_type = f"statistical_outlier (z-score: {z_score:.2f})"
+            confidence = min(0.5 + (z_score - self.z_score_threshold) * 0.1, 0.95)
+        elif statistical_anomaly and is_unusual:
+            # Both agree - increase confidence
+            confidence = min(confidence * 1.2, 0.98)
         
         # Update previous frame
         self.prev_gray = gray
@@ -245,6 +262,38 @@ class MotionAnalyzer:
                 return True, "LOITERING", 0.70
         
         return False, None, 0.0
+    
+    def _detect_statistical_anomaly(self, magnitude: float) -> Tuple[bool, float]:
+        """
+        Detect motion anomaly using Z-score (statistical outlier detection)
+        
+        Args:
+            magnitude: Current motion magnitude
+            
+        Returns:
+            (is_anomaly, z_score)
+        """
+        if not self.enable_statistical_detection:
+            return False, 0.0
+        
+        # Need enough history for statistics
+        if len(self.motion_history) < 10:
+            return False, 0.0
+        
+        # Calculate Z-score
+        mean = np.mean(self.motion_history)
+        std = np.std(self.motion_history)
+        
+        # Avoid division by zero
+        if std < 1e-6:
+            return False, 0.0
+        
+        z_score = (magnitude - mean) / std
+        
+        # Detect anomaly if beyond threshold
+        is_anomaly = abs(z_score) > self.z_score_threshold
+        
+        return is_anomaly, abs(z_score)
     
     def get_motion_heatmap(self, frame_shape: Tuple[int, int]) -> np.ndarray:
         """
