@@ -1,6 +1,7 @@
 # Experimental Results & Analysis
 
 ## Table of Contents
+
 1. [Final Results Summary](#final-results-summary)
 2. [Detailed Performance Analysis](#detailed-performance-analysis)
 3. [Comparison with Baselines](#comparison-with-baselines)
@@ -14,6 +15,7 @@
 ### 1.1 Overall Performance
 
 **Best Model** (Epoch 15):
+
 ```
 ══════════════════════════════════════════════════
               FINAL TEST RESULTS
@@ -32,10 +34,11 @@ Error Rate:           0.62%
 ```
 
 **Training Efficiency**:
+
 ```
 Total Training Time:  ~2.6 hours
 Epochs to Convergence: 13
-GPU: NVIDIA RTX 5090 (24GB)
+GPU: NVIDIA GPU (sufficient VRAM)
 Average Time/Epoch: ~12 minutes
 ```
 
@@ -69,6 +72,7 @@ weighted avg        0.9928    0.9925    0.9926     60635
 **Performance Tiers**:
 
 **Tier 1: Exceptional (F1 > 99%)**
+
 - Stealing: 99.62%
 - NormalVideos: 99.53%
 - Assault: 99.53%
@@ -78,10 +82,12 @@ weighted avg        0.9928    0.9925    0.9926     60635
 - Arson: 99.00%
 
 **Tier 2: Excellent (98% < F1 < 99%)**
+
 - Shooting: 98.81%
 - Arrest: 98.58%
 
 **Tier 3: Very Good (96% < F1 < 98%)**
+
 - Abuse: 97.57%
 - Robbery: 97.40%
 - RoadAccidents: 97.10%
@@ -117,18 +123,20 @@ NormalVideos    35  31  22   1  28  11  80  55  89   8  20   8  34 45606
 **Matrix Analysis**:
 
 **Diagonal Strength**:
+
 - Perfect predictions dominate the diagonal
 - Strong class separation (minimal off-diagonal values)
 
 **Main Confusion Patterns**:
+
 ```
 1. NormalVideos → Various Abnormal (423 errors total)
    - Normal → Fighting: 80 (most common)
    - Normal → Robbery: 89
    - Normal → RoadAccidents: 55
-   
+
    Reason: Crowded normal scenes or complex activities
-   
+
 2. Inter-Abnormal Confusion: Minimal (< 10 errors each)
    - Abnormal classes well-separated
    - Model distinguishes event types effectively
@@ -146,6 +154,7 @@ NormalVideos    35  31  22   1  28  11  80  55  89   8  20   8  34 45606
 #### 2.1.1 Best Performing Classes
 
 **Stealing (F1: 99.62%)**
+
 ```
 Precision: 99.48%
 Recall:    99.76%
@@ -155,7 +164,7 @@ Analysis:
   ✓ Clear visual patterns (taking objects)
   ✓ Distinctive motion (hand movements)
   ✓ Good representation in dataset
-  
+
 Errors: Only 5 misclassifications
   - 2 → Normal (subtle cases)
   - 2 → Robbery (semantic overlap)
@@ -163,6 +172,7 @@ Errors: Only 5 misclassifications
 ```
 
 **NormalVideos (F1: 99.53%)**
+
 ```
 Precision: 99.98% ← Near perfect!
 Recall:    99.08%
@@ -172,7 +182,7 @@ Analysis:
   ✓ Largest class, well-represented
   ✓ Model learns normal patterns effectively
   ✓ High precision prevents false alarms
-  
+
 Errors: 423 false positives (0.92% of normal samples)
   - Crowded scenes → Fighting
   - Complex activities → Various abnormal
@@ -180,6 +190,7 @@ Errors: 423 false positives (0.92% of normal samples)
 ```
 
 **Explosion (F1: 99.42%)**
+
 ```
 Precision: 98.84%
 Recall:    100.00% ← Perfect recall!
@@ -189,7 +200,7 @@ Analysis:
   ✓ Distinctive visual signature (fire, smoke)
   ✓ Never misses explosions (perfect recall)
   ✓ Clear separation from other classes
-  
+
 Errors: 11 false positives only
   - All from NormalVideos (11/46028 = 0.02%)
 ```
@@ -197,6 +208,7 @@ Errors: 11 false positives only
 #### 2.1.2 Challenging Classes
 
 **Fighting (F1: 96.63%)**
+
 ```
 Precision: 93.62% ← Lowest precision
 Recall:    99.84%
@@ -206,12 +218,13 @@ Analysis:
   ⚠ Overlaps with crowded normal scenes
   ⚠ Similar motion to normal activities
   ✓ Excellent recall (catches fights)
-  
+
 Errors: 80 false positives (normal → fighting)
   Reason: Crowded scenes, sports activities
 ```
 
 **Vandalism (F1: 96.95%)**
+
 ```
 Precision: 94.22%
 Recall:    99.83%
@@ -221,12 +234,13 @@ Analysis:
   ⚠ Varied visual appearance
   ⚠ Some overlap with normal maintenance
   ✓ Good recall
-  
+
 Errors: 34 false positives from normal
   Reason: Destructive but normal activities
 ```
 
 **RoadAccidents (F1: 97.10%)**
+
 ```
 Precision: 94.46%
 Recall:    99.90%
@@ -236,7 +250,7 @@ Analysis:
   ⚠ Variable severity (minor to major)
   ⚠ Some normal traffic → accident confusion
   ✓ Nearly perfect recall
-  
+
 Errors: 55 false positives
   Reason: Busy traffic scenes
 ```
@@ -244,6 +258,7 @@ Errors: 55 false positives
 ### 2.2 Precision vs Recall Trade-off
 
 **Overall Pattern**:
+
 ```
 Macro Precision: 97.20%
 Macro Recall:    99.75%
@@ -252,11 +267,13 @@ Trade-off: Model favors high recall over precision
 ```
 
 **Implication**:
+
 - **Conservative Detection**: Catches almost all anomalies (99.75%)
 - **Few False Negatives**: Rarely misses abnormal events
 - **Some False Positives**: Flags some normal as abnormal (2.8%)
 
 **Use Case Suitability**:
+
 ```
 ✓ Security/Surveillance: Excellent (better to over-alert than miss)
 ✓ Automated Monitoring: Very Good (high recall critical)
@@ -268,6 +285,7 @@ Trade-off: Model favors high recall over precision
 **Total Errors: 423 (0.70%)**
 
 **Error Breakdown**:
+
 ```
 Type 1: Normal → Abnormal (False Positives)
   Count: 423 errors
@@ -286,6 +304,7 @@ Type 3: Abnormal → Wrong Abnormal
 ```
 
 **Error Severity**:
+
 ```
 Critical Errors (False Negatives): ~30 (0.05% of total)
 Moderate Errors (Wrong Class): ~20 (0.03% of total)
@@ -297,6 +316,7 @@ Total Critical+Moderate: 50 (0.08%) ← Excellent!
 ### 2.4 Confidence Analysis
 
 **Prediction Confidence Distribution**:
+
 ```
 High Confidence (> 95%):   92% of predictions
 Medium Confidence (80-95%): 7% of predictions
@@ -316,6 +336,7 @@ Separation: Clear confidence gap between correct/wrong
 ```
 
 **Confidence Calibration**:
+
 ```
 Predicted Confidence 90% → Actual Accuracy: 89.2%
 Predicted Confidence 95% → Actual Accuracy: 94.8%
@@ -369,24 +390,25 @@ Conclusion: Well-calibrated predictions
 
 **Performance Table**:
 
-| Model | Architecture | Test Acc | F1 Score | Training Time | Parameters |
-|-------|--------------|----------|----------|---------------|------------|
-| Baseline CNN | Simple CNN | 54.00% | ~50% | 2h | 8M |
-| ResNet-LSTM | ResNet50 + LSTM | ~65% | ~60% | 4h | 26M |
-| EfficientNet-BiLSTM | EffNet + BiLSTM | ~75% | ~72% | 3h | 12M |
-| + Transformer | + 2L Transformer | ~85% | ~83% | 3.5h | 14M |
-| **Research-Enhanced** | **Multi-task Full** | **99.38%** | **99.39%** | **2.6h** | **15M** |
+| Model                 | Architecture        | Test Acc   | F1 Score   | Training Time | Parameters |
+| --------------------- | ------------------- | ---------- | ---------- | ------------- | ---------- |
+| Baseline CNN          | Simple CNN          | 54.00%     | ~50%       | 2h            | 8M         |
+| ResNet-LSTM           | ResNet50 + LSTM     | ~65%       | ~60%       | 4h            | 26M        |
+| EfficientNet-BiLSTM   | EffNet + BiLSTM     | ~75%       | ~72%       | 3h            | 12M        |
+| + Transformer         | + 2L Transformer    | ~85%       | ~83%       | 3.5h          | 14M        |
+| **Research-Enhanced** | **Multi-task Full** | **99.38%** | **99.39%** | **2.6h**      | **15M**    |
 
 **Literature Comparison**:
 
-| Method (from Papers) | Dataset | Reported Performance | Our Model |
-|---------------------|---------|---------------------|-----------|
-| RNN Temporal Regression | UCF Crime | 88.7% AUC | **99.38% Acc** |
-| CNN-BiLSTM-Transformer | UCF Crime | 87-89% AUC | **99.38% Acc** |
-| MIL-Based | UCF Crime | 87% AUC | **99.38% Acc** |
-| VAE Reconstruction | UCF Crime | 85% AUC | **99.38% Acc** |
+| Method (from Papers)    | Dataset   | Reported Performance | Our Model      |
+| ----------------------- | --------- | -------------------- | -------------- |
+| RNN Temporal Regression | UCF Crime | 88.7% AUC            | **99.38% Acc** |
+| CNN-BiLSTM-Transformer  | UCF Crime | 87-89% AUC           | **99.38% Acc** |
+| MIL-Based               | UCF Crime | 87% AUC              | **99.38% Acc** |
+| VAE Reconstruction      | UCF Crime | 85% AUC              | **99.38% Acc** |
 
 **Key Achievements**:
+
 - ✅ **+45.38% over baseline** (54% → 99.38%)
 - ✅ **+10.38% over SOTA** (88.7% → 99.38%)
 - ✅ **Faster training** (2.6h vs 4h+)
@@ -396,36 +418,37 @@ Conclusion: Well-calibrated predictions
 
 **Component Contribution Analysis**:
 
-| Configuration | Components | Test Acc | Δ from Previous |
-|--------------|------------|----------|-----------------|
-| 1. Baseline | EfficientNet only | 60% | - |
-| 2. + Temporal | + BiLSTM | 72% | +12% |
-| 3. + Long-range | + Transformer | 84% | +12% |
-| 4. + Class Balance | + Focal Loss | 91% | +7% |
-| 5. + Multi-task | + Regression + VAE | 96% | +5% |
-| 6. + All Losses | + MIL + All | **99.38%** | +3.38% |
+| Configuration      | Components         | Test Acc   | Δ from Previous |
+| ------------------ | ------------------ | ---------- | --------------- |
+| 1. Baseline        | EfficientNet only  | 60%        | -               |
+| 2. + Temporal      | + BiLSTM           | 72%        | +12%            |
+| 3. + Long-range    | + Transformer      | 84%        | +12%            |
+| 4. + Class Balance | + Focal Loss       | 91%        | +7%             |
+| 5. + Multi-task    | + Regression + VAE | 96%        | +5%             |
+| 6. + All Losses    | + MIL + All        | **99.38%** | +3.38%          |
 
 **Loss Component Ablation**:
 
-| Loss Configuration | Test Acc | F1 Score |
-|-------------------|----------|----------|
-| Classification only | 91.2% | 90.8% |
-| + Regression (1.0) | 95.3% | 95.1% |
-| + Focal Loss (0.5) | 96.8% | 96.9% |
-| + VAE (0.3) | 98.1% | 98.2% |
+| Loss Configuration     | Test Acc   | F1 Score   |
+| ---------------------- | ---------- | ---------- |
+| Classification only    | 91.2%      | 90.8%      |
+| + Regression (1.0)     | 95.3%      | 95.1%      |
+| + Focal Loss (0.5)     | 96.8%      | 96.9%      |
+| + VAE (0.3)            | 98.1%      | 98.2%      |
 | **+ MIL (0.3) - Full** | **99.38%** | **99.39%** |
 
 **Regularization Ablation**:
 
-| Regularization | Test Acc | Train-Test Gap |
-|----------------|----------|----------------|
-| No regularization | 54% | 41.88% (overfitting) |
-| Dropout only | 68% | 27% |
-| + Weight decay | 78% | 15% |
-| + Multi-task | 94% | 3% |
-| **+ Augmentation (Full)** | **99.38%** | **0.02%** |
+| Regularization            | Test Acc   | Train-Test Gap       |
+| ------------------------- | ---------- | -------------------- |
+| No regularization         | 54%        | 41.88% (overfitting) |
+| Dropout only              | 68%        | 27%                  |
+| + Weight decay            | 78%        | 15%                  |
+| + Multi-task              | 94%        | 3%                   |
+| **+ Augmentation (Full)** | **99.38%** | **0.02%**            |
 
 **Key Insights**:
+
 1. Every component contributes significantly
 2. Multi-task learning provides largest regularization benefit
 3. Regression loss (primary task) is most important single loss
@@ -438,6 +461,7 @@ Conclusion: Well-calibrated predictions
 ### 4.1 Novel Contributions
 
 **1. Multi-Task Learning Framework**
+
 ```
 Innovation: Combined 4 complementary tasks in unified architecture
   - Temporal Regression (predict future)
@@ -449,48 +473,53 @@ Impact: +8% accuracy over single-task baseline
 ```
 
 **2. Relative Positional Encoding for Videos**
+
 ```
 Innovation: Adapted Transformer positional encoding for temporal sequences
   - Standard: Absolute frame positions
   - Ours: Relative temporal distances
-  
+
 Impact: Better generalization to variable-length sequences
 ```
 
 **3. Hierarchical Temporal Modeling**
+
 ```
 Innovation: Three-tier temporal processing
   - Local: BiLSTM (frame-to-frame)
   - Global: Transformer (long-range)
   - Sequence: Aggregation for prediction
-  
+
 Impact: Captures both short and long temporal patterns
 ```
 
 **4. Adaptive Class Balancing**
+
 ```
 Innovation: Combined three techniques
   - Focal Loss (gradient balancing)
   - Weighted Sampling (batch balancing)
   - MIL Ranking (decision boundary)
-  
+
 Impact: All classes > 96% F1 (perfect balance)
 ```
 
 **5. Efficient Training Pipeline**
+
 ```
 Innovation: Optimization stack
   - Mixed Precision (FP16)
   - Gradient Accumulation
   - Efficient Data Loading
   - Early Stopping
-  
+
 Impact: 29× faster training (75h → 2.6h)
 ```
 
 ### 4.2 Technical Innovations
 
 **1. Loss Function Design**
+
 ```python
 # Smooth L1 for regression (robust to outliers)
 L_reg = smooth_l1(pred_future, actual_future)
@@ -506,6 +535,7 @@ L_total = 1.0*L_reg + 0.5*L_focal + 0.3*L_mil + 0.3*L_vae
 ```
 
 **2. Architecture Design Choices**
+
 ```
 EfficientNet-B0: Optimal accuracy/efficiency trade-off
 BiLSTM (2 layers): Captures local temporal dependencies
@@ -514,6 +544,7 @@ Multi-task heads: Shared encoder, specialized decoders
 ```
 
 **3. Training Techniques**
+
 ```
 OneCycleLR: Fast convergence with good generalization
 Gradient Clipping: Stability in deep network
@@ -524,6 +555,7 @@ Mixed Precision: 2× speedup without accuracy loss
 ### 4.3 Engineering Best Practices
 
 **1. Modular Code Architecture**
+
 ```
 src/
   models/     - Clean model definitions
@@ -535,6 +567,7 @@ Benefits: Easy to modify, debug, and extend
 ```
 
 **2. Configuration Management**
+
 ```yaml
 # config_research_enhanced.yaml
 # All hyperparameters in single file
@@ -544,6 +577,7 @@ Benefits: Reproducibility, easy experimentation
 ```
 
 **3. Comprehensive Logging**
+
 ```python
 # Weights & Biases integration
 # Terminal progress bars
@@ -553,6 +587,7 @@ Benefits: Track experiments, debug issues
 ```
 
 **4. Systematic Validation**
+
 ```python
 # Pre-training validation (8 tests)
 # During-training monitoring
@@ -572,22 +607,26 @@ Benefits: Catch issues early, ensure quality
 **Key Accomplishments**:
 
 1. **Exceptional Performance**
+
    - 99.38% test accuracy (vs 54% baseline)
    - 99.39% weighted F1 score
    - 98.64% macro F1 score
    - ALL 14 classes > 96% F1
 
 2. **Excellent Generalization**
+
    - Train-test gap: 0.15% (near-zero overfitting)
    - Robust to unseen data
    - Well-calibrated confidence scores
 
 3. **Balanced Performance**
+
    - No class left behind (min F1: 96.63%)
    - Handles severe class imbalance (139:1 ratio)
    - High recall (99.75%) with acceptable precision (97.20%)
 
 4. **Efficient Training**
+
    - 2.6 hours total (29× speedup)
    - Converged in 13 epochs
    - Mixed precision (2× faster)
@@ -603,14 +642,17 @@ Benefits: Catch issues early, ensure quality
 **Scientific Contributions**:
 
 1. **Multi-Task Framework for Video Anomaly Detection**
+
    - Demonstrated effectiveness of combining regression, classification, and reconstruction
    - Showed multi-task learning as powerful regularization
 
 2. **Hierarchical Temporal Modeling**
+
    - Validated BiLSTM + Transformer architecture
    - Proved relative positional encoding benefits
 
 3. **Class Imbalance Solutions**
+
    - Combined Focal Loss + Weighted Sampling + MIL
    - Achieved perfect balance (all classes > 96%)
 
@@ -621,10 +663,12 @@ Benefits: Catch issues early, ensure quality
 **Practical Contributions**:
 
 1. **State-of-the-Art Results**
+
    - 99.38% accuracy exceeds published SOTA
    - Reproducible with provided code and config
 
 2. **Production-Ready System**
+
    - Clean, modular codebase
    - Comprehensive documentation
    - Easy to deploy and maintain
@@ -639,21 +683,25 @@ Benefits: Catch issues early, ensure quality
 **Current Limitations**:
 
 1. **Dataset-Specific**
+
    - Trained on UCF Crime only
    - May not generalize to other surveillance datasets
    - Transfer learning not tested
 
 2. **Sequence Length Fixed**
+
    - Uses 16-frame sequences
    - Longer events may be truncated
    - Variable-length sequences not supported
 
 3. **Computational Requirements**
-   - Needs high-end GPU (RTX 5090)
+
+   - Needs a high-memory GPU
    - Large memory footprint (3.5 GB)
    - Not optimized for edge devices
 
 4. **Real-Time Constraints**
+
    - Inference: ~50ms per sequence (20 FPS)
    - Not suitable for high frame rate cameras
    - Batch processing preferred
@@ -666,10 +714,12 @@ Benefits: Catch issues early, ensure quality
 **Known Issues**:
 
 1. **Crowded Scene Confusion**
+
    - Normal crowds → Fighting (80 errors)
    - Complex scenes challenge model
 
 2. **Low Resolution**
+
    - Blurry frames degrade performance
    - Requires good quality input
 
@@ -683,11 +733,13 @@ Benefits: Catch issues early, ensure quality
 **Short-Term Improvements** (1-3 months):
 
 1. **Model Enhancements**
+
    - [ ] Attention visualization (interpret decisions)
    - [ ] Ensemble methods (combine multiple models)
    - [ ] Uncertainty quantification (Bayesian approach)
 
 2. **Dataset Expansion**
+
    - [ ] Add more event types
    - [ ] Collect edge cases
    - [ ] Balance dataset further
@@ -700,11 +752,13 @@ Benefits: Catch issues early, ensure quality
 **Medium-Term Research** (3-6 months):
 
 1. **Cross-Dataset Generalization**
+
    - [ ] Test on other surveillance datasets
    - [ ] Domain adaptation techniques
    - [ ] Few-shot learning for new classes
 
 2. **Real-Time Processing**
+
    - [ ] Optimize for 30+ FPS
    - [ ] Streaming video support
    - [ ] Online learning
@@ -717,16 +771,19 @@ Benefits: Catch issues early, ensure quality
 **Long-Term Vision** (6-12 months):
 
 1. **Multimodal Learning**
+
    - [ ] Add audio features
    - [ ] Text descriptions
    - [ ] Sensor data fusion
 
 2. **Active Learning**
+
    - [ ] Human-in-the-loop
    - [ ] Continuous improvement
    - [ ] Adaptive retraining
 
 3. **Production Deployment**
+
    - [ ] REST API service
    - [ ] Web dashboard
    - [ ] Mobile app integration
@@ -739,18 +796,22 @@ Benefits: Catch issues early, ensure quality
 ### 5.5 Research Questions for Future
 
 1. **How well does the model transfer to other surveillance datasets?**
+
    - CUHK Avenue, ShanghaiTech, etc.
    - Cross-domain adaptation needed?
 
 2. **Can we achieve real-time performance on edge devices?**
+
    - Model pruning and quantization
    - Knowledge distillation to smaller models
 
 3. **What is the minimum training data required?**
+
    - Few-shot learning approaches
    - Data augmentation strategies
 
 4. **How can we improve interpretability?**
+
    - Attention mechanisms
    - Concept-based explanations
 
@@ -765,12 +826,14 @@ This research-enhanced anomaly detection system demonstrates that combining prov
 The system is production-ready and can be deployed for real-world video surveillance applications. The comprehensive documentation, modular codebase, and reproducible experiments facilitate further research and development.
 
 **Key Success Factors**:
+
 1. Research-backed design (literature review → implementation)
 2. Systematic engineering (validation → optimization)
 3. Comprehensive regularization (multi-task + dropout + augmentation)
 4. Careful monitoring (metrics → adjustments)
 
 **Impact**:
+
 - **Academic**: Demonstrates multi-task learning effectiveness
 - **Practical**: Production-ready surveillance system
 - **Community**: Open-source implementation and documentation
@@ -782,6 +845,7 @@ The system is production-ready and can be deployed for real-world video surveill
 ## Appendix: Detailed Metrics
 
 ### A.1 Complete Confusion Matrix
+
 [See Section 1.3 for full matrix]
 
 ### A.2 Per-Class Detailed Metrics
@@ -820,6 +884,7 @@ Class: NormalVideos
 ### A.3 Training Curves
 
 **Loss Curves** (Epoch 1-13):
+
 ```
 Epoch | Train Loss | Val Loss | Train Acc | Val Acc | Val F1
 ------|------------|----------|-----------|---------|--------
@@ -833,6 +898,7 @@ Epoch | Train Loss | Val Loss | Train Acc | Val Acc | Val F1
 ```
 
 **Learning Rate Schedule**:
+
 ```
 Epoch  1: 0.0001
 Epoch  5: 0.0005 (warmup)

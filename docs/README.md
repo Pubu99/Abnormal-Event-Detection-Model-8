@@ -9,15 +9,18 @@ This directory contains comprehensive technical documentation for the Research-E
 ## 📖 Documentation Structure
 
 ### 1. **TECHNICAL_OVERVIEW.md** - [High-Level System Overview](TECHNICAL_OVERVIEW.md)
+
 **What it covers**: Executive summary, problem statement, system design, and key innovations
 
 **Read this if you want to**:
+
 - Understand what this project is about
 - Learn the research foundation and motivation
 - See the big picture before diving into details
 - Present the project to others
 
 **Key Sections**:
+
 - Executive Summary (achievements and impact)
 - Problem Statement (baseline failure and challenges)
 - Research Foundation (literature review and design decisions)
@@ -31,15 +34,18 @@ This directory contains comprehensive technical documentation for the Research-E
 ---
 
 ### 2. **ARCHITECTURE_DETAILS.md** - [Deep Dive into Model Architecture](ARCHITECTURE_DETAILS.md)
+
 **What it covers**: Detailed component design, mathematical formulations, and implementation details
 
 **Read this if you want to**:
+
 - Understand exactly how the model works
 - Learn the mathematics behind each component
 - See implementation code snippets
 - Modify or extend the architecture
 
 **Key Sections**:
+
 - Architecture Overview (end-to-end pipeline diagram)
 - Component Details:
   - EfficientNet-B0 Backbone (spatial features)
@@ -55,9 +61,11 @@ This directory contains comprehensive technical documentation for the Research-E
 ---
 
 ### 3. **TRAINING_METHODOLOGY.md** - [Training Strategy and Challenges](TRAINING_METHODOLOGY.md)
+
 **What it covers**: How we trained the model, overcame challenges, and optimized for speed
 
 **Read this if you want to**:
+
 - Learn the complete training pipeline
 - Understand how we solved class imbalance
 - See speed optimization techniques
@@ -65,6 +73,7 @@ This directory contains comprehensive technical documentation for the Research-E
 - Replicate or improve the training process
 
 **Key Sections**:
+
 - Training Strategy (multi-task learning, loss weighting, regularization)
 - Class Imbalance Solutions:
   - Focal Loss (down-weight easy examples)
@@ -85,9 +94,11 @@ This directory contains comprehensive technical documentation for the Research-E
 ---
 
 ### 4. **RESULTS_AND_ANALYSIS.md** - [Experimental Results and Analysis](RESULTS_AND_ANALYSIS.md)
+
 **What it covers**: Final test results, detailed performance analysis, comparisons, and future work
 
 **Read this if you want to**:
+
 - See the final test performance (99.25% accuracy)
 - Understand per-class performance breakdown
 - Compare with baselines and state-of-the-art
@@ -95,6 +106,7 @@ This directory contains comprehensive technical documentation for the Research-E
 - Know the limitations and future directions
 
 **Key Sections**:
+
 - Final Results Summary (overall metrics, per-class F1 scores)
 - Detailed Performance Analysis:
   - Class-wise deep dive (best and challenging classes)
@@ -124,31 +136,38 @@ This directory contains comprehensive technical documentation for the Research-E
 ### I want to understand...
 
 **...what this project achieved:**
+
 - Start with: [TECHNICAL_OVERVIEW.md](TECHNICAL_OVERVIEW.md) - Section 1 & 6
 - Then read: [RESULTS_AND_ANALYSIS.md](RESULTS_AND_ANALYSIS.md) - Section 1
 
 **...how the model works:**
+
 - Start with: [TECHNICAL_OVERVIEW.md](TECHNICAL_OVERVIEW.md) - Section 4
 - Deep dive: [ARCHITECTURE_DETAILS.md](ARCHITECTURE_DETAILS.md) - All sections
 
 **...how to train it:**
+
 - Start with: [TRAINING_METHODOLOGY.md](TRAINING_METHODOLOGY.md) - Section 1
 - Optimizations: [TRAINING_METHODOLOGY.md](TRAINING_METHODOLOGY.md) - Section 3
 
 **...how we solved class imbalance:**
+
 - Read: [TRAINING_METHODOLOGY.md](TRAINING_METHODOLOGY.md) - Section 2
 - Also see: [TECHNICAL_OVERVIEW.md](TECHNICAL_OVERVIEW.md) - Section 5.2
 
 **...the challenges we faced:**
+
 - Read: [TRAINING_METHODOLOGY.md](TRAINING_METHODOLOGY.md) - Section 4
 - Context: [TECHNICAL_OVERVIEW.md](TECHNICAL_OVERVIEW.md) - Section 2
 
 **...the experimental results:**
+
 - Start with: [RESULTS_AND_ANALYSIS.md](RESULTS_AND_ANALYSIS.md) - Section 1
 - Comparison: [RESULTS_AND_ANALYSIS.md](RESULTS_AND_ANALYSIS.md) - Section 3
 - Analysis: [RESULTS_AND_ANALYSIS.md](RESULTS_AND_ANALYSIS.md) - Section 2
 
 **...future improvements:**
+
 - Read: [RESULTS_AND_ANALYSIS.md](RESULTS_AND_ANALYSIS.md) - Section 5.4
 
 ---
@@ -158,6 +177,7 @@ This directory contains comprehensive technical documentation for the Research-E
 For quick reference, here are the headline results:
 
 ### Performance Metrics
+
 ```
 Test Accuracy:        99.25%
 F1 Score (Weighted):  99.26%
@@ -167,6 +187,7 @@ Recall (Macro):       99.75%
 ```
 
 ### Improvements
+
 ```
 Over Baseline:        +45.25% (54% → 99.25%)
 Over SOTA Literature: +10-12% (87-89% → 99.25%)
@@ -175,6 +196,7 @@ All Classes F1:       > 96% (perfect balance)
 ```
 
 ### Architecture
+
 ```
 Backbone:      EfficientNet-B0 (5.3M params)
 Temporal:      BiLSTM 2-layer (4.7M params)
@@ -184,11 +206,12 @@ Total:         14,966,922 parameters (~15M)
 ```
 
 ### Training
+
 ```
 Dataset:       UCF Crime (1,610 videos, 1.27M frames)
 Sequences:     303,173 (16-frame clips)
 Epochs:        13 (early stopping)
-Time:          2.6 hours (RTX 5090)
+Time:          2.6 hours (single GPU)
 GPU Memory:    ~3.5 GB
 Batch Size:    64 (effective 128)
 ```
@@ -198,23 +221,27 @@ Batch Size:    64 (effective 128)
 ## 🔬 Technical Stack
 
 ### Deep Learning
+
 - **Framework**: PyTorch 2.0+
 - **Precision**: Mixed FP16 (Automatic Mixed Precision)
 - **Optimization**: AdamW + OneCycleLR
 - **Backbone**: EfficientNet-B0 (timm library)
 
 ### Data Processing
+
 - **Augmentation**: Albumentations 1.4.20
 - **Format**: Pre-extracted frames (JPG)
 - **Loading**: PyTorch DataLoader (8 workers)
 
 ### Infrastructure
-- **GPU**: NVIDIA RTX 5090 (24GB VRAM)
+
+- **GPU**: NVIDIA GPU (sufficient VRAM)
 - **CUDA**: 12.1+
 - **cuDNN**: 8.9+
 - **Python**: 3.12.3
 
 ### Monitoring
+
 - **Experiment Tracking**: Weights & Biases (W&B)
 - **Logging**: Custom logger + TensorBoard
 - **Checkpointing**: Timestamp + accuracy naming
@@ -224,25 +251,30 @@ Batch Size:    64 (effective 128)
 ## 📁 Related Files
 
 ### Configuration
+
 - **configs/config_research_enhanced.yaml** - Complete training configuration
 
 ### Source Code
+
 - **src/models/research_model.py** - Main model architecture (723 lines)
 - **src/models/losses.py** - Custom loss functions (Focal, MIL, VAE)
 - **src/data/sequence_dataset.py** - Temporal sequence data loader
 - **src/training/research_trainer.py** - Multi-task trainer (560 lines)
 
 ### Scripts
+
 - **train_research.py** - Training script (188 lines)
 - **evaluate_research.py** - Evaluation script (266 lines)
 - **validate_research_setup.py** - Pre-training validation
 
 ### Outputs
+
 - **outputs/checkpoints/** - Saved model checkpoints
 - **outputs/results/** - Evaluation results and reports
 - **outputs/logs/** - Training logs
 
 ### Documentation (User Guides)
+
 - **QUICKSTART.md** - Quick start guide (how to run)
 - **SETUP_GUIDE.md** - Environment setup instructions
 - **README.md** - Project overview and usage
@@ -252,17 +284,20 @@ Batch Size:    64 (effective 128)
 ## 🎓 Learning Path
 
 ### For Beginners (Understanding the Project)
+
 1. Read [TECHNICAL_OVERVIEW.md](TECHNICAL_OVERVIEW.md) - Sections 1-3
 2. Skim [RESULTS_AND_ANALYSIS.md](RESULTS_AND_ANALYSIS.md) - Section 1
 3. Check [TRAINING_METHODOLOGY.md](TRAINING_METHODOLOGY.md) - Section 2 (class imbalance)
 
 ### For ML Practitioners (Implementing Similar Systems)
+
 1. Read [TECHNICAL_OVERVIEW.md](TECHNICAL_OVERVIEW.md) - All sections
 2. Study [ARCHITECTURE_DETAILS.md](ARCHITECTURE_DETAILS.md) - Sections 2-4
 3. Deep dive [TRAINING_METHODOLOGY.md](TRAINING_METHODOLOGY.md) - All sections
 4. Review [RESULTS_AND_ANALYSIS.md](RESULTS_AND_ANALYSIS.md) - Section 3 (comparisons)
 
 ### For Researchers (Extending the Work)
+
 1. Read all four documents thoroughly
 2. Pay special attention to:
    - [ARCHITECTURE_DETAILS.md](ARCHITECTURE_DETAILS.md) - Section 5 (mathematical formulation)
@@ -271,6 +306,7 @@ Batch Size:    64 (effective 128)
 3. Check source code in src/ directory
 
 ### For Reviewers/Evaluators
+
 1. Start with [TECHNICAL_OVERVIEW.md](TECHNICAL_OVERVIEW.md) - Executive Summary
 2. Validate claims in [RESULTS_AND_ANALYSIS.md](RESULTS_AND_ANALYSIS.md) - Sections 1-2
 3. Review methodology in [TRAINING_METHODOLOGY.md](TRAINING_METHODOLOGY.md)
@@ -281,7 +317,9 @@ Batch Size:    64 (effective 128)
 ## 🔍 Frequently Asked Questions
 
 ### Q: What makes this model achieve 99.25% accuracy?
+
 **A**: Combination of:
+
 1. Multi-task learning (regression + classification + VAE)
 2. Hierarchical temporal modeling (BiLSTM + Transformer)
 3. Advanced class balancing (Focal Loss + weighted sampling)
@@ -290,7 +328,9 @@ Batch Size:    64 (effective 128)
 See: [TECHNICAL_OVERVIEW.md](TECHNICAL_OVERVIEW.md) - Section 5
 
 ### Q: How did you handle the severe class imbalance (76% normal)?
+
 **A**: Three-pronged approach:
+
 1. Focal Loss (down-weights easy examples)
 2. Weighted Random Sampling (balances batches)
 3. MIL Ranking Loss (separates normal/abnormal)
@@ -298,7 +338,9 @@ See: [TECHNICAL_OVERVIEW.md](TECHNICAL_OVERVIEW.md) - Section 5
 See: [TRAINING_METHODOLOGY.md](TRAINING_METHODOLOGY.md) - Section 2
 
 ### Q: How did you achieve 29× training speedup?
+
 **A**: Combined optimizations:
+
 - Mixed Precision (FP16): 2× faster
 - Efficient data loading: 1.5× faster
 - Early stopping: 7.7× fewer epochs (13 vs 100)
@@ -307,7 +349,9 @@ See: [TRAINING_METHODOLOGY.md](TRAINING_METHODOLOGY.md) - Section 2
 See: [TRAINING_METHODOLOGY.md](TRAINING_METHODOLOGY.md) - Section 3
 
 ### Q: What are the main limitations?
+
 **A**:
+
 - Dataset-specific (UCF Crime only)
 - Fixed 16-frame sequences
 - Requires high-end GPU
@@ -317,7 +361,9 @@ See: [TRAINING_METHODOLOGY.md](TRAINING_METHODOLOGY.md) - Section 3
 See: [RESULTS_AND_ANALYSIS.md](RESULTS_AND_ANALYSIS.md) - Section 5.3
 
 ### Q: How does this compare to published research?
+
 **A**:
+
 - Literature SOTA: 87-89% AUC
 - Our model: 99.25% accuracy
 - Improvement: +10-12% over SOTA
@@ -326,7 +372,9 @@ See: [RESULTS_AND_ANALYSIS.md](RESULTS_AND_ANALYSIS.md) - Section 5.3
 See: [RESULTS_AND_ANALYSIS.md](RESULTS_AND_ANALYSIS.md) - Section 3.2
 
 ### Q: Can this be used in production?
+
 **A**: Yes! The model is production-ready:
+
 - Excellent generalization (0.15% train-test gap)
 - Well-calibrated confidence scores
 - Modular codebase
@@ -357,6 +405,7 @@ If you use this work, please cite:
 **Repository**: [Abnormal-Event-Detection-Model-8](https://github.com/Pubu99/Abnormal-Event-Detection-Model-8)
 
 **Issues**: Please open an issue on GitHub for:
+
 - Bug reports
 - Feature requests
 - Questions about implementation
@@ -367,6 +416,7 @@ If you use this work, please cite:
 ## 🏆 Acknowledgments
 
 This work builds upon research from multiple papers:
+
 - Temporal Regression for video understanding
 - Focal Loss for class imbalance
 - Transformer architectures for sequences
@@ -380,6 +430,7 @@ Special thanks to the authors of these papers and the open-source community.
 ## 📜 Version History
 
 **v1.0** (October 15, 2025)
+
 - Initial comprehensive documentation release
 - Four main documents covering all aspects
 - Complete implementation and results
@@ -389,13 +440,13 @@ Special thanks to the authors of these papers and the open-source community.
 
 ## 🎯 Document Purpose Summary
 
-| Document | Purpose | Length | Reading Time |
-|----------|---------|--------|--------------|
-| [TECHNICAL_OVERVIEW.md](TECHNICAL_OVERVIEW.md) | System overview and design | ~6,000 words | 20-25 min |
-| [ARCHITECTURE_DETAILS.md](ARCHITECTURE_DETAILS.md) | Deep dive into architecture | ~9,000 words | 30-40 min |
-| [TRAINING_METHODOLOGY.md](TRAINING_METHODOLOGY.md) | Training process and challenges | ~8,000 words | 30-35 min |
-| [RESULTS_AND_ANALYSIS.md](RESULTS_AND_ANALYSIS.md) | Results and future work | ~7,500 words | 25-30 min |
-| **TOTAL** | **Complete documentation** | **~30,500 words** | **~2 hours** |
+| Document                                           | Purpose                         | Length            | Reading Time |
+| -------------------------------------------------- | ------------------------------- | ----------------- | ------------ |
+| [TECHNICAL_OVERVIEW.md](TECHNICAL_OVERVIEW.md)     | System overview and design      | ~6,000 words      | 20-25 min    |
+| [ARCHITECTURE_DETAILS.md](ARCHITECTURE_DETAILS.md) | Deep dive into architecture     | ~9,000 words      | 30-40 min    |
+| [TRAINING_METHODOLOGY.md](TRAINING_METHODOLOGY.md) | Training process and challenges | ~8,000 words      | 30-35 min    |
+| [RESULTS_AND_ANALYSIS.md](RESULTS_AND_ANALYSIS.md) | Results and future work         | ~7,500 words      | 25-30 min    |
+| **TOTAL**                                          | **Complete documentation**      | **~30,500 words** | **~2 hours** |
 
 ---
 
@@ -414,6 +465,6 @@ After reading the documentation:
 **Last Updated**: October 15, 2025  
 **Documentation Version**: 1.0  
 **Model Version**: research_enhanced_20251015_161345_acc99.1_f199.1.pth  
-**Test Accuracy**: 99.25%  
+**Test Accuracy**: 99.25%
 
 **Status**: ✅ PRODUCTION READY

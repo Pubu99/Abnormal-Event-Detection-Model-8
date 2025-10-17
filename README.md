@@ -38,11 +38,13 @@ This project implements a **research-enhanced multi-task learning framework** fo
 ### The Journey: From Failure to Success
 
 **Baseline Model** (Simple CNN):
+
 - ❌ Test Accuracy: **54%**
 - ❌ Catastrophic overfitting (95.88% train → 54% test)
 - ❌ Biased toward majority class (76% normal videos)
 
 **Our Solution** (Research-Enhanced Model):
+
 - ✅ Test Accuracy: **99.38%**
 - ✅ Perfect generalization (99.4% val → 99.38% test)
 - ✅ Balanced performance (all 14 classes > 95% F1)
@@ -70,7 +72,7 @@ This project implements a **research-enhanced multi-task learning framework** fo
 ⏱️  Total Training Time:   2.6 hours (vs 75h baseline)
 🚀 Speedup:               29× faster
 📦 Epochs to Converge:    16 (early stopping)
-💾 GPU Memory:            ~3.5 GB (RTX 5090)
+💾 GPU Memory:            ~3.5 GB (GPU)
 ⚡ Mixed Precision:       FP16 (2× speedup)
 ```
 
@@ -154,15 +156,15 @@ This project implements a **research-enhanced multi-task learning framework** fo
 
 ### Model Statistics
 
-| Component | Technology | Parameters | Purpose |
-|-----------|-----------|------------|---------|
-| **Spatial Features** | EfficientNet-B0 | 5.3M (35.3%) | Frame-level feature extraction |
-| **Local Temporal** | BiLSTM (2 layers) | 4.7M (31.4%) | Sequential pattern modeling |
-| **Global Temporal** | Transformer (2 layers) | 4.2M (28.0%) | Long-range dependencies |
-| **Regression Head** | MLP (2 layers) | 0.66M (4.4%) | Future feature prediction |
-| **Classification** | MLP (2 layers) | 0.66M (4.4%) | Event classification |
-| **VAE Module** | Encoder-Decoder | 0.76M (5.1%) | Reconstruction |
-| **Total** | **Research-Enhanced** | **~15M** | **Multi-task learning** |
+| Component            | Technology             | Parameters   | Purpose                        |
+| -------------------- | ---------------------- | ------------ | ------------------------------ |
+| **Spatial Features** | EfficientNet-B0        | 5.3M (35.3%) | Frame-level feature extraction |
+| **Local Temporal**   | BiLSTM (2 layers)      | 4.7M (31.4%) | Sequential pattern modeling    |
+| **Global Temporal**  | Transformer (2 layers) | 4.2M (28.0%) | Long-range dependencies        |
+| **Regression Head**  | MLP (2 layers)         | 0.66M (4.4%) | Future feature prediction      |
+| **Classification**   | MLP (2 layers)         | 0.66M (4.4%) | Event classification           |
+| **VAE Module**       | Encoder-Decoder        | 0.76M (5.1%) | Reconstruction                 |
+| **Total**            | **Research-Enhanced**  | **~15M**     | **Multi-task learning**        |
 
 ---
 
@@ -173,6 +175,7 @@ This project implements a **research-enhanced multi-task learning framework** fo
 **Innovation**: Combine complementary learning objectives in a unified model
 
 **Tasks**:
+
 - **Primary**: Temporal Regression (predict features 4 frames ahead) - 88.7% AUC method from literature
 - **Auxiliary**: Classification with Focal Loss (14 event types) - handles class imbalance
 - **Tertiary**: VAE Reconstruction - unsupervised anomaly detection
@@ -185,6 +188,7 @@ This project implements a **research-enhanced multi-task learning framework** fo
 **Innovation**: Three-tier temporal processing
 
 **Architecture**:
+
 - **Tier 1**: EfficientNet (frame-level spatial features)
 - **Tier 2**: BiLSTM (local temporal patterns, frame-to-frame)
 - **Tier 3**: Transformer (long-range dependencies across sequence)
@@ -198,11 +202,13 @@ This project implements a **research-enhanced multi-task learning framework** fo
 **Our 3-Pronged Approach**:
 
 1. **Focal Loss** (γ=2.0)
+
    - Down-weights easy examples (well-classified normals)
    - Up-weights hard examples (minority classes)
    - Auto-computed class weights
 
 2. **Weighted Random Sampling**
+
    - Inverse frequency weighting: rare classes sampled more
    - Balanced batches (40% normal, 60% abnormal)
    - Prevents majority class bias
@@ -222,6 +228,7 @@ This project implements a **research-enhanced multi-task learning framework** fo
 **Ours**: Relative temporal distances (how far apart frames are)
 
 **Benefits**:
+
 - Translation invariance (pattern recognized anywhere in time)
 - Better generalization to variable-length sequences
 - Models "temporal distance" between events
@@ -229,6 +236,7 @@ This project implements a **research-enhanced multi-task learning framework** fo
 ### 5. Efficient Training Pipeline
 
 **Optimizations**:
+
 - **Mixed Precision (FP16)**: 2× faster, 50% less memory
 - **Gradient Accumulation**: Effective batch size 128 (physical 64)
 - **OneCycleLR**: Fast convergence, better generalization
@@ -249,14 +257,14 @@ This project implements a **research-enhanced multi-task learning framework** fo
 
 ### Class Distribution
 
-| Class | Videos | Percentage | Challenge |
-|-------|--------|------------|-----------|
-| **NormalVideos** | 950 | 59% | Severe majority class |
-| Stealing | 100 | 6% | Well-represented |
-| Shoplifting | 90 | 6% | Well-represented |
-| Fighting | 80 | 5% | Medium class |
-| Burglary | 75 | 5% | Medium class |
-| Others | 315 | 19% | Minority classes |
+| Class            | Videos | Percentage | Challenge             |
+| ---------------- | ------ | ---------- | --------------------- |
+| **NormalVideos** | 950    | 59%        | Severe majority class |
+| Stealing         | 100    | 6%         | Well-represented      |
+| Shoplifting      | 90     | 6%         | Well-represented      |
+| Fighting         | 80     | 5%         | Medium class          |
+| Burglary         | 75     | 5%         | Medium class          |
+| Others           | 315    | 19%        | Minority classes      |
 
 **Imbalance Ratio**: 139:1 (NormalVideos:Shooting)
 
@@ -271,6 +279,7 @@ Test:        60,635 sequences (same as validation for evaluation)
 ### Sequence Formation
 
 **Method**: Sliding window with overlap
+
 ```
 Sequence Length:  16 frames
 Frame Stride:     2 (sample every 2nd frame)
@@ -290,7 +299,7 @@ Future Steps:     4 frames ahead (for regression)
 Python 3.12+
 PyTorch 2.0+
 CUDA 12.1+ (for GPU training)
-24GB+ GPU (RTX 5090 recommended)
+GPU with sufficient VRAM (recommend using a modern NVIDIA GPU)
 ```
 
 ### Installation
@@ -323,7 +332,7 @@ pip install -r requirements.txt
 # Train the research-enhanced model
 python train_research.py --config configs/config_research_enhanced.yaml
 
-# Expected training time: ~2.6 hours on RTX 5090
+# Expected training time: ~2.6 hours on a single GPU
 # Convergence: ~13 epochs (early stopping)
 ```
 
@@ -350,21 +359,21 @@ python inference.py --checkpoint outputs/checkpoints/best.pth \
 
 ### Overall Performance
 
-| Metric | Value | Comparison |
-|--------|-------|------------|
-| **Test Accuracy** | 99.38% | +45.38% vs baseline (54%) |
-| **F1 (Weighted)** | 99.39% | Near-perfect |
-| **F1 (Macro)** | 98.64% | Balanced across classes |
-| **Precision** | 97.58% | High confidence |
-| **Recall** | 99.74% | Catches almost all anomalies |
+| Metric            | Value  | Comparison                   |
+| ----------------- | ------ | ---------------------------- |
+| **Test Accuracy** | 99.38% | +45.38% vs baseline (54%)    |
+| **F1 (Weighted)** | 99.39% | Near-perfect                 |
+| **F1 (Macro)**    | 98.64% | Balanced across classes      |
+| **Precision**     | 97.58% | High confidence              |
+| **Recall**        | 99.74% | Catches almost all anomalies |
 
 ### Per-Class Performance (All > 95% F1!)
 
-| Tier | Classes | F1 Range |
-|------|---------|----------|
+| Tier                | Classes                                                                         | F1 Range     |
+| ------------------- | ------------------------------------------------------------------------------- | ------------ |
 | **Exceptional** (8) | Assault, NormalVideos, Fighting, Abuse, Burglary, Arrest, Shoplifting, Stealing | 99.18-99.65% |
-| **Excellent** (4) | Arson, Shooting, Explosion, Vandalism | 97.81-98.82% |
-| **Very Good** (2) | Robbery, RoadAccidents | 95.39-97.35% |
+| **Excellent** (4)   | Arson, Shooting, Explosion, Vandalism                                           | 97.81-98.82% |
+| **Very Good** (2)   | Robbery, RoadAccidents                                                          | 95.39-97.35% |
 
 ### Confusion Matrix Highlights
 
@@ -375,13 +384,13 @@ python inference.py --checkpoint outputs/checkpoints/best.pth \
 
 ### Comparison with State-of-the-Art
 
-| Method | Dataset | Performance | Our Model |
-|--------|---------|-------------|-----------|
-| RNN Temporal Regression | UCF Crime | 88.7% AUC | **99.38% Acc** |
-| CNN-BiLSTM-Transformer | UCF Crime | 87-89% AUC | **99.38% Acc** |
-| MIL-Based Approach | UCF Crime | 87% AUC | **99.38% Acc** |
-| VAE Reconstruction | UCF Crime | 85% AUC | **99.38% Acc** |
-| **Our Research Model** | **UCF Crime** | **99.38% Acc** | **+10.38% improvement** |
+| Method                  | Dataset       | Performance    | Our Model               |
+| ----------------------- | ------------- | -------------- | ----------------------- |
+| RNN Temporal Regression | UCF Crime     | 88.7% AUC      | **99.38% Acc**          |
+| CNN-BiLSTM-Transformer  | UCF Crime     | 87-89% AUC     | **99.38% Acc**          |
+| MIL-Based Approach      | UCF Crime     | 87% AUC        | **99.38% Acc**          |
+| VAE Reconstruction      | UCF Crime     | 85% AUC        | **99.38% Acc**          |
+| **Our Research Model**  | **UCF Crime** | **99.38% Acc** | **+10.38% improvement** |
 
 ### Training Efficiency
 
@@ -408,18 +417,21 @@ GPU Memory:           3.5 GB (mixed precision)
 Comprehensive documentation in `docs/` directory:
 
 1. **[TECHNICAL_OVERVIEW.md](docs/TECHNICAL_OVERVIEW.md)** (6,000 words)
+
    - System overview and design philosophy
    - Problem statement and research foundation
    - Key innovations and technical stack
    - **Read this first** for understanding the project
 
 2. **[ARCHITECTURE_DETAILS.md](docs/ARCHITECTURE_DETAILS.md)** (9,000 words)
+
    - Complete architecture breakdown
    - Mathematical formulations (loss functions, attention, etc.)
    - Forward pass analysis with tensor shapes
    - Design rationale for each component
 
 3. **[TRAINING_METHODOLOGY.md](docs/TRAINING_METHODOLOGY.md)** (8,000 words)
+
    - Training strategy and hyperparameters
    - **Class imbalance solutions** (Focal Loss, Weighted Sampling, MIL)
    - **Speed optimizations** (Mixed Precision, Gradient Accumulation)
@@ -427,6 +439,7 @@ Comprehensive documentation in `docs/` directory:
    - Validation and testing procedures
 
 4. **[RESULTS_AND_ANALYSIS.md](docs/RESULTS_AND_ANALYSIS.md)** (7,500 words)
+
    - Complete test results (99.25% accuracy breakdown)
    - Per-class performance analysis
    - Confusion matrix interpretation
@@ -451,14 +464,17 @@ Comprehensive documentation in `docs/` directory:
 ### Novel Contributions
 
 1. **Multi-Task Learning Framework**
+
    - Combined temporal regression, classification, and reconstruction
    - Demonstrated complementary learning benefits (+8% accuracy)
 
 2. **Hierarchical Temporal Modeling**
+
    - Three-tier processing: EfficientNet → BiLSTM → Transformer
    - Captures patterns from frame-level to sequence-level
 
 3. **Adaptive Class Balancing**
+
    - Three-pronged approach: Focal Loss + Weighted Sampling + MIL
    - Achieved perfect balance (all classes > 96% F1)
 
@@ -469,14 +485,17 @@ Comprehensive documentation in `docs/` directory:
 ### Research Questions Answered
 
 ✅ **Can multi-task learning improve video anomaly detection?**
+
 - Yes! +8% accuracy over single-task baseline
 - Provides implicit regularization, prevents overfitting
 
 ✅ **How to handle severe class imbalance (139:1 ratio)?**
+
 - Three-pronged approach achieved perfect balance
 - All 14 classes > 95% F1 (no class left behind)
 
 ✅ **Can we exceed state-of-the-art on UCF Crime?**
+
 - Yes! 99.38% vs 87-89% SOTA (+10.38% improvement)
 - Perfect generalization (0.02% train-test gap)
 
@@ -490,24 +509,26 @@ If you use this work, please cite:
   author={Research Team},
   year={2025},
   howpublished={GitHub Repository},
-  url={https://github.com/Pubu99/Abnormal-Event-Detection-Model-8},
-  note={Test Accuracy: 99.25\%, UCF Crime Dataset}
+   url={https://github.com/Pubu99/Abnormal-Event-Detection-Model-8}
 }
 ```
 
 ### Future Work
 
 **Short-term** (1-3 months):
+
 - Attention visualization for interpretability
 - Ensemble methods for robustness
 - Model quantization (INT8) for edge deployment
 
 **Medium-term** (3-6 months):
+
 - Cross-dataset evaluation (CUHK Avenue, ShanghaiTech)
 - Real-time processing (30+ FPS)
 - Few-shot learning for new event types
 
 **Long-term** (6-12 months):
+
 - Multimodal learning (audio + video)
 - Active learning with human-in-the-loop
 - Production deployment (REST API, web dashboard)
@@ -580,6 +601,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🙏 Acknowledgments
 
 This work builds upon research from multiple papers:
+
 - Temporal Regression for video understanding (88.7% AUC)
 - Focal Loss for class imbalance (Lin et al.)
 - Transformer architectures with relative positional encoding
@@ -587,6 +609,7 @@ This work builds upon research from multiple papers:
 - Multiple Instance Learning (MIL)
 
 Special thanks to:
+
 - UCF Crime dataset creators
 - PyTorch and timm library developers
 - Open-source computer vision community
@@ -598,6 +621,7 @@ Special thanks to:
 **Repository**: [Abnormal-Event-Detection-Model-8](https://github.com/Pubu99/Abnormal-Event-Detection-Model-8)
 
 **Issues**: Please open an issue on GitHub for:
+
 - Bug reports
 - Feature requests
 - Questions about implementation
@@ -632,7 +656,6 @@ Reproducibility:    Fully reproducible ✓
 ⚖️ **Perfect class balance** - All 14 classes > 95% F1  
 🎓 **Research-grade** - 30,500+ words of documentation  
 🏗️ **Production-ready** - Clean, modular, tested codebase  
-📊 **Fully reproducible** - Complete configs and scripts  
+📊 **Fully reproducible** - Complete configs and scripts
 
 **Transform your video anomaly detection with research-enhanced multi-task learning!** 🎉
-

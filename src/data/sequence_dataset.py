@@ -340,7 +340,7 @@ def create_sequence_dataloaders(
 if __name__ == "__main__":
     # Test sequence dataset
     import sys
-    sys.path.append('/home/abnormal/Group34/Abnormal-Event-Detection-Model-8')
+    # Avoid hardcoded absolute paths; ensure the repository root is on sys.path when needed
     
     from src.utils.config import ConfigManager
     from torchvision import transforms

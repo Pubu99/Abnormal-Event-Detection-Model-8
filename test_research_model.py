@@ -4,7 +4,11 @@ Verify forward pass, output shapes, and parameter count.
 """
 
 import sys
-sys.path.append('/home/abnormal/Group34/Abnormal-Event-Detection-Model-8')
+# sys.path.insert can be used if running from outside the repo; avoid hardcoded absolute paths
+# Example:
+# repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '.'))
+# if repo_root not in sys.path:
+#     sys.path.insert(0, repo_root)
 
 import torch
 from src.utils.config import ConfigManager

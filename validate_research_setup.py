@@ -11,7 +11,7 @@ Tests:
 """
 
 import sys
-sys.path.append('/home/abnormal/Group34/Abnormal-Event-Detection-Model-8')
+# Avoid hardcoded absolute paths; use repository-relative imports when possible
 
 import torch
 from src.utils.config import ConfigManager
@@ -171,7 +171,7 @@ print("✅ ALL PRE-TRAINING TESTS PASSED!")
 print("=" * 80)
 print("\n🚀 Ready to start full training:")
 print(f"   Command: python train_research.py --config configs/config_research_enhanced.yaml")
-print(f"\n   Expected training time: 6-8 hours on RTX 5090")
+print(f"\n   Expected training time: 6-8 hours on a single GPU")
 print(f"   Target performance: 85-88% test accuracy")
 print(f"   Current baseline: 54% test accuracy")
 print(f"   Improvement goal: +31-34% absolute")
