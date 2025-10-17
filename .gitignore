@@ -9,6 +9,7 @@ data/raw/**/*.avi
 data/raw/**/*.mp4
 data/raw/**/*.mov
 data/processed/
+data/annotations/
 
 # Training outputs and artifacts
 outputs/
@@ -20,6 +21,27 @@ checkpoints/
 *.hdf5
 *.safetensors
 *.filepart
+
+# Backend uploads and temporary files
+uploads/
+backend/api/uploads/
+backend/api/yolov8n.pt
+*.mp4.tmp
+*.avi.tmp
+
+# Frontend build and production
+frontend/build/
+frontend/dist/
+frontend/.next/
+
+# Node modules
+node_modules/
+frontend/node_modules/
+
+# Screenshots and auto-saved evidence
+screenshots/
+auto_screenshots/
+saved_evidence/
 
 # TensorBoard and experiment tracking
 runs/
@@ -61,6 +83,7 @@ notebooks/.ipynb_checkpoints/
 
 # Legacy documentation (keep only current docs)
 docs/OLD/
+docs/NEW/
 
 # ========================================
 # Python Standard Ignores
@@ -204,6 +227,9 @@ celerybeat.pid
 
 # Environments
 .env
+.env.local
+.env.development
+.env.production
 .envrc
 .venv
 env/
@@ -211,6 +237,8 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+backend/venv/
+backend/env/
 
 # Spyder project settings
 .spyderproject

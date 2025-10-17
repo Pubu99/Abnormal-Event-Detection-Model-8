@@ -1,8 +1,8 @@
 # Deep Learning Framework (CUDA-enabled, version depends on your GPU)
-//--extra-index-url https://download.pytorch.org/whl/cu128
-torch==2.7.0
-torchvision==0.22.0
-torchaudio==2.7.0
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.7.0+cu128
+torchvision==0.22.0+cu128
+torchaudio==2.7.0+cu128
 
 # Computer Vision
 opencv-python==4.10.0.84
