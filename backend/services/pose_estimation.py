@@ -17,11 +17,31 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import math
 
+# Prefer OpenPose if available; fallback to MediaPipe
+_OPENPOSE_AVAILABLE = False
+_MEDIAPIPE_AVAILABLE = False
 try:
-    import mediapipe as mp
-except ImportError:
-    mp = None
-    print("⚠️ MediaPipe not installed. Pose estimation disabled.")
+    # Try the official module name used by CMU OpenPose builds
+    from openpose import pyopenpose as op  # type: ignore
+    _OPENPOSE_AVAILABLE = True
+    print("🕺 OpenPose detected (openpose.pyopenpose)")
+except Exception:
+    try:
+        # Some community builds expose pyopenpose directly
+        import pyopenpose as op  # type: ignore
+        _OPENPOSE_AVAILABLE = True
+        print("🕺 OpenPose detected (pyopenpose)")
+    except Exception:
+        op = None
+        _OPENPOSE_AVAILABLE = False
+        # proceed to MediaPipe fallback
+    try:
+        import mediapipe as mp
+        _MEDIAPIPE_AVAILABLE = True
+        print("🧍 MediaPipe detected: using MediaPipe for pose estimation")
+    except Exception:
+        mp = None
+        print("⚠️ No pose backend installed. Pose estimation disabled.")
 
 
 @dataclass
@@ -49,7 +69,7 @@ class PoseEstimator:
             min_detection_confidence: Minimum confidence for detection
             min_tracking_confidence: Minimum confidence for tracking
         """
-        self.enabled = mp is not None
+        self.enabled = _OPENPOSE_AVAILABLE or _MEDIAPIPE_AVAILABLE
         self.min_detection_confidence = min_detection_confidence
         self.min_tracking_confidence = min_tracking_confidence
         
@@ -58,7 +78,9 @@ class PoseEstimator:
         self.mp_drawing = None
         self.mp_drawing_styles = None
         self.pose = None
+        self.openpose_wrapper = None
         self._initialized = False
+        self.backend = None  # 'openpose' or 'mediapipe'
         
         # Pose history for temporal analysis
         self.pose_history = []
@@ -68,17 +90,34 @@ class PoseEstimator:
         """Initialize MediaPipe only when first needed"""
         if self._initialized or not self.enabled:
             return
+        # Initialize OpenPose if available, else MediaPipe
+        if _OPENPOSE_AVAILABLE:
+            try:
+                params = dict()
+                params["model_folder"] = "models/openpose"  # allow user to place models here
+                params["hand"] = False
+                params["face"] = False
+                params["net_resolution"] = "-1x256"  # speed/quality trade-off
+                self.openpose_wrapper = op.WrapperPython()
+                self.openpose_wrapper.configure(params)
+                self.openpose_wrapper.start()
+                self.backend = 'openpose'
+                self._initialized = True
+                return
+            except Exception as e:
+                print(f"⚠️ OpenPose init failed, falling back to MediaPipe: {e}")
+        if _MEDIAPIPE_AVAILABLE:
+            self.mp_pose = mp.solutions.pose
+            self.mp_drawing = mp.solutions.drawing_utils
+            self.mp_drawing_styles = mp.solutions.drawing_styles
+            self.pose = self.mp_pose.Pose(
+                min_detection_confidence=self.min_detection_confidence,
+                min_tracking_confidence=self.min_tracking_confidence,
+                model_complexity=1
+            )
+            self.backend = 'mediapipe'
+            self._initialized = True
         
-        self.mp_pose = mp.solutions.pose
-        self.mp_drawing = mp.solutions.drawing_utils
-        self.mp_drawing_styles = mp.solutions.drawing_styles
-        
-        self.pose = self.mp_pose.Pose(
-            min_detection_confidence=self.min_detection_confidence,
-            min_tracking_confidence=self.min_tracking_confidence,
-            model_complexity=1  # 0=lite, 1=full, 2=heavy
-        )
-        self._initialized = True
         
     def analyze(self, frame: np.ndarray) -> PoseResult:
         """
@@ -103,27 +142,46 @@ class PoseEstimator:
         # Initialize MediaPipe on first use
         self._lazy_init()
         
-        # Convert BGR to RGB
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        
-        # Process frame
-        results = self.pose.process(rgb_frame)
-        
         poses = []
         keypoints_list = []
-        
-        if results.pose_landmarks:
-            # Extract keypoints
-            landmarks = results.pose_landmarks.landmark
-            keypoints = [
-                (lm.x, lm.y, lm.visibility)
-                for lm in landmarks
-            ]
-            keypoints_list.append(keypoints)
-            
-            # Get pose information
-            pose_data = self._extract_pose_features(keypoints, frame.shape)
-            poses.append(pose_data)
+        if _OPENPOSE_AVAILABLE and self.openpose_wrapper is not None:
+            # OpenPose inference
+            try:
+                datum = op.Datum()
+                imageToProcess = frame
+                datum.cvInputData = imageToProcess
+                self.openpose_wrapper.emplaceAndPop([datum])
+                if datum.poseKeypoints is not None and len(datum.poseKeypoints.shape) >= 2:
+                    # datum.poseKeypoints shape: (numPeople, 25, 3)
+                    person = datum.poseKeypoints[0]
+                    # Normalize to width/height
+                    h, w = frame.shape[:2]
+                    keypoints = [(kp[0] / max(w,1e-6), kp[1] / max(h,1e-6), kp[2]) for kp in person]
+                    keypoints_list.append(keypoints)
+                    try:
+                        pose_data = self._extract_pose_features(keypoints, frame.shape)
+                        poses.append(pose_data)
+                    except Exception as e:
+                        # Skip feature extraction errors for robustness
+                        print(f"⚠️ Pose feature extraction failed (OpenPose): {e}")
+            except Exception as e:
+                print(f"⚠️ OpenPose inference failed this frame: {e}")
+        elif _MEDIAPIPE_AVAILABLE and self.pose is not None:
+            # MediaPipe inference
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            results = self.pose.process(rgb_frame)
+            if results.pose_landmarks:
+                landmarks = results.pose_landmarks.landmark
+                keypoints = [
+                    (lm.x, lm.y, lm.visibility)
+                    for lm in landmarks
+                ]
+                keypoints_list.append(keypoints)
+                try:
+                    pose_data = self._extract_pose_features(keypoints, frame.shape)
+                    poses.append(pose_data)
+                except Exception as e:
+                    print(f"⚠️ Pose feature extraction failed (MediaPipe): {e}")
         
         # Update history
         self.pose_history.append(poses)
@@ -147,20 +205,39 @@ class PoseEstimator:
         """Extract meaningful features from pose keypoints"""
         h, w = frame_shape[:2]
         
-        # Key body parts (MediaPipe indices)
-        LEFT_SHOULDER = 11
-        RIGHT_SHOULDER = 12
-        LEFT_ELBOW = 13
-        RIGHT_ELBOW = 14
-        LEFT_WRIST = 15
-        RIGHT_WRIST = 16
-        LEFT_HIP = 23
-        RIGHT_HIP = 24
-        LEFT_KNEE = 25
-        RIGHT_KNEE = 26
-        LEFT_ANKLE = 27
-        RIGHT_ANKLE = 28
-        NOSE = 0
+        # Key body parts indices depending on backend
+        if self.backend == 'openpose':
+            # OpenPose BODY_25 mapping
+            NOSE = 0
+            NECK = 1
+            RIGHT_SHOULDER = 2
+            RIGHT_ELBOW = 3
+            RIGHT_WRIST = 4
+            LEFT_SHOULDER = 5
+            LEFT_ELBOW = 6
+            LEFT_WRIST = 7
+            MID_HIP = 8
+            RIGHT_HIP = 9
+            RIGHT_KNEE = 10
+            RIGHT_ANKLE = 11
+            LEFT_HIP = 12
+            LEFT_KNEE = 13
+            LEFT_ANKLE = 14
+        else:
+            # MediaPipe (33 landmarks)
+            LEFT_SHOULDER = 11
+            RIGHT_SHOULDER = 12
+            LEFT_ELBOW = 13
+            RIGHT_ELBOW = 14
+            LEFT_WRIST = 15
+            RIGHT_WRIST = 16
+            LEFT_HIP = 23
+            RIGHT_HIP = 24
+            LEFT_KNEE = 25
+            RIGHT_KNEE = 26
+            LEFT_ANKLE = 27
+            RIGHT_ANKLE = 28
+            NOSE = 0
         
         # Extract coordinates
         def get_point(idx):
@@ -307,47 +384,50 @@ class PoseEstimator:
         """
         if not self.enabled or not pose_result.keypoints:
             return frame
-        
-        # Convert to RGB for MediaPipe
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        
-        # Process again to get landmarks for drawing
-        results = self.pose.process(rgb_frame)
-        
-        if results.pose_landmarks:
-            # Draw landmarks
-            annotated_frame = frame.copy()
-            
-            # Choose color based on anomaly
-            if pose_result.is_anomalous:
-                if pose_result.anomaly_type in ["FIGHTING_DETECTED", "GROUP_ALTERCATION"]:
-                    landmark_color = (0, 0, 255)  # Red
-                elif pose_result.anomaly_type in ["PERSON_FALLING", "DISTRESS_POSE"]:
-                    landmark_color = (0, 165, 255)  # Orange
-                else:
-                    landmark_color = (0, 255, 255)  # Yellow
+        annotated_frame = frame.copy()
+        # Choose color based on anomaly
+        if pose_result.is_anomalous:
+            if pose_result.anomaly_type in ["FIGHTING_DETECTED", "GROUP_ALTERCATION"]:
+                landmark_color = (0, 0, 255)  # Red
+            elif pose_result.anomaly_type in ["PERSON_FALLING", "DISTRESS_POSE"]:
+                landmark_color = (0, 165, 255)  # Orange
             else:
-                landmark_color = (0, 255, 0)  # Green
-            
-            # Draw skeleton
-            self.mp_drawing.draw_landmarks(
-                annotated_frame,
-                results.pose_landmarks,
-                self.mp_pose.POSE_CONNECTIONS,
-                landmark_drawing_spec=self.mp_drawing.DrawingSpec(
-                    color=landmark_color,
-                    thickness=2,
-                    circle_radius=2
-                ),
-                connection_drawing_spec=self.mp_drawing.DrawingSpec(
-                    color=landmark_color,
-                    thickness=2,
-                    circle_radius=2
-                )
-            )
-            
-            return annotated_frame
-        
+                landmark_color = (0, 255, 255)  # Yellow
+        else:
+            landmark_color = (0, 255, 0)  # Green
+
+        try:
+            if _OPENPOSE_AVAILABLE and self.openpose_wrapper is not None and pose_result.keypoints:
+                # Draw simple circles for keypoints (OpenPose has many connections; keep it light)
+                h, w = frame.shape[:2]
+                for (x_norm, y_norm, conf) in pose_result.keypoints[0]:
+                    x = int(x_norm * w)
+                    y = int(y_norm * h)
+                    if conf > 0.05:
+                        cv2.circle(annotated_frame, (x, y), 3, landmark_color, -1)
+                return annotated_frame
+            elif _MEDIAPIPE_AVAILABLE and self.pose is not None:
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                results = self.pose.process(rgb_frame)
+                if results.pose_landmarks:
+                    self.mp_drawing.draw_landmarks(
+                        annotated_frame,
+                        results.pose_landmarks,
+                        self.mp_pose.POSE_CONNECTIONS,
+                        landmark_drawing_spec=self.mp_drawing.DrawingSpec(
+                            color=landmark_color,
+                            thickness=2,
+                            circle_radius=2
+                        ),
+                        connection_drawing_spec=self.mp_drawing.DrawingSpec(
+                            color=landmark_color,
+                            thickness=2,
+                            circle_radius=2
+                        )
+                    )
+                    return annotated_frame
+        except Exception:
+            pass
         return frame
     
     def reset(self):

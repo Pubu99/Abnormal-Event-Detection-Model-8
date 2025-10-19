@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import "./LiveCamera.css"; // Professional animations and styles
 
-function LiveCamera({ onDetection }) {
+function LiveCamera({ onDetection, onAnomaly, onFrame }) {
   const [isStreaming, setIsStreaming] = useState(false);
   const [cameraActive, setCameraActive] = useState(false);
   const [currentResult, setCurrentResult] = useState(null);
@@ -20,7 +20,6 @@ function LiveCamera({ onDetection }) {
   // PRO UI/UX enhancements
   const [severityFilter, setSeverityFilter] = useState("ALL"); // Filter: ALL, CRITICAL, HIGH, MEDIUM, LOW
   const [showInfoPanel, setShowInfoPanel] = useState(true); // Toggle panel on mobile
-  const [pageSize, setPageSize] = useState(10); // Pagination
   const [currentPage, setCurrentPage] = useState(0); // Current page for anomaly list
   const [isLoadingHistory, setIsLoadingHistory] = useState(false); // Loading state for backend fetch
 
@@ -238,6 +237,9 @@ function LiveCamera({ onDetection }) {
       if (message.type === "prediction") {
         console.log("📊 Received prediction:", message);
         handlePrediction(message);
+        if (onFrame && message.data?.frame_base64) {
+          onFrame(message.data.frame_base64, message.data?.summary || "");
+        }
       } else if (message.error) {
         console.error("❌ Backend error:", message.error);
         setStatusMessage(`Backend error: ${message.error}`);
@@ -382,6 +384,13 @@ function LiveCamera({ onDetection }) {
       };
 
       setDetectionHistory((prev) => [detection, ...prev].slice(0, 50)); // Keep last 50
+      if (onAnomaly) {
+        onAnomaly(data.fusion, {
+          timestamp,
+          frame_number,
+          threat_level: data.threat_level,
+        });
+      }
     }
 
     // NEW: Add to frame timeline
@@ -658,37 +667,6 @@ function LiveCamera({ onDetection }) {
 
       setSavedScreenshots((prev) => [...prev, screenshot].slice(-50)); // Keep last 50
       console.log("📸 Screenshot auto-saved:", screenshot.filename);
-    });
-  };
-
-  const captureScreenshot = (data) => {
-    if (!videoRef.current || !overlayCanvasRef.current) return;
-
-    const canvas = document.createElement("canvas");
-    const ctx = canvas.getContext("2d");
-
-    canvas.width = videoRef.current.videoWidth;
-    canvas.height = videoRef.current.videoHeight;
-
-    // Draw video frame
-    ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-
-    // Draw overlay with bounding boxes
-    ctx.drawImage(overlayCanvasRef.current, 0, 0, canvas.width, canvas.height);
-
-    // Convert to data URL and download
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const filename = `detection_${data.predicted_class}_${timestamp}.png`;
-
-    canvas.toBlob((blob) => {
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      a.click();
-      URL.revokeObjectURL(url);
-
-      console.log(`📸 Screenshot saved: ${filename}`);
     });
   };
 

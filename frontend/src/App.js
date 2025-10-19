@@ -1,81 +1,83 @@
-import React, { useState } from "react";
+import React from "react";
 import "./App.css";
-import VideoUpload from "./components/VideoUpload";
-import LiveCamera from "./components/LiveCamera";
-import ResultsDisplay from "./components/ResultsDisplay";
-import Header from "./components/Header";
-import Stats from "./components/Stats";
+import "./styles/professional.css";
+import ProfessionalDashboardV2 from "./components/ProfessionalDashboardV2";
 
 function App() {
-  const [activeTab, setActiveTab] = useState("upload");
-  const [analysisResult, setAnalysisResult] = useState(null);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-
-  const handleAnalysisComplete = (result) => {
-    setAnalysisResult(result);
-    setIsAnalyzing(false);
-  };
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-blue-900 to-gray-900">
-      <Header />
-
-      <main className="container mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-6 lg:py-8 max-w-7xl">
-        {/* Stats Overview */}
-        <Stats />
-
-        {/* Tab Navigation */}
-        <div className="bg-gray-800 rounded-lg shadow-xl p-4 sm:p-6 mb-4 sm:mb-6">
-          <div className="flex flex-col sm:flex-row sm:space-x-4 space-y-2 sm:space-y-0 border-b border-gray-700 mb-4 sm:mb-6">
-            <button
-              onClick={() => setActiveTab("upload")}
-              className={`px-4 sm:px-6 py-2 sm:py-3 font-semibold transition-all rounded-t-lg sm:rounded-none ${
-                activeTab === "upload"
-                  ? "text-blue-400 border-b-2 border-blue-400 bg-gray-700 sm:bg-transparent"
-                  : "text-gray-400 hover:text-gray-200 hover:bg-gray-700"
-              }`}
-            >
-              <span className="inline sm:hidden">📹 Upload</span>
-              <span className="hidden sm:inline">📹 Video Upload</span>
-            </button>
-            <button
-              onClick={() => setActiveTab("live")}
-              className={`px-4 sm:px-6 py-2 sm:py-3 font-semibold transition-all rounded-t-lg sm:rounded-none ${
-                activeTab === "live"
-                  ? "text-blue-400 border-b-2 border-blue-400 bg-gray-700 sm:bg-transparent"
-                  : "text-gray-400 hover:text-gray-200 hover:bg-gray-700"
-              }`}
-            >
-              <span className="inline sm:hidden">🔴 Live</span>
-              <span className="hidden sm:inline">🔴 Live Camera</span>
-            </button>
+    <div className="min-h-screen bg-slate-950">
+      {/* Professional Header */}
+      <header className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 border-b border-slate-700 shadow-2xl">
+        <div className="px-4 sm:px-6 lg:px-8 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-lg flex items-center justify-center shadow-lg shadow-cyan-500/50">
+                <svg
+                  className="w-7 h-7 text-white"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                  />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+                  />
+                </svg>
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold text-white tracking-tight">
+                  ANOMALY DETECTION SYSTEM
+                </h1>
+                <p className="text-slate-400 text-sm">
+                  Enterprise Surveillance Intelligence Platform
+                </p>
+              </div>
+            </div>
+            {/* System Status Indicator */}
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                <span className="text-slate-400 text-sm">System Online</span>
+              </div>
+            </div>
           </div>
-
-          {/* Content */}
-          {activeTab === "upload" && (
-            <VideoUpload
-              onAnalysisComplete={handleAnalysisComplete}
-              isAnalyzing={isAnalyzing}
-              setIsAnalyzing={setIsAnalyzing}
-            />
-          )}
-
-          {activeTab === "live" && (
-            <LiveCamera onDetection={handleAnalysisComplete} />
-          )}
         </div>
+      </header>
 
-        {/* Results Display */}
-        {analysisResult && <ResultsDisplay result={analysisResult} />}
+      {/* Main Dashboard */}
+      <main>
+        <ProfessionalDashboardV2 />
       </main>
 
-      {/* Footer */}
-      <footer className="bg-gray-800 text-gray-400 py-6 mt-12">
-        <div className="container mx-auto px-4 text-center">
-          <p>🎓 FYP 2025 - Abnormal Event Detection System</p>
-          <p className="text-sm mt-2">
-            Powered by EfficientNet + BiLSTM + Transformer | 99.38% Accuracy
-          </p>
+      {/* Professional Footer */}
+      <footer className="bg-slate-900/50 backdrop-blur-sm border-t border-slate-800 mt-8">
+        <div className="px-4 sm:px-6 lg:px-8 py-6">
+          <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+            <div className="text-center md:text-left">
+              <p className="text-slate-400 text-sm">
+                🎓 Final Year Project 2025 - Advanced AI/ML Research
+              </p>
+              <p className="text-slate-500 text-xs mt-1">
+                EfficientNet-B0 + BiLSTM + Transformer | Multi-Modal Fusion
+                Engine
+              </p>
+            </div>
+            <div className="flex items-center gap-6 text-xs text-slate-500">
+              <span>UCF Crime Dataset</span>
+              <span>•</span>
+              <span>14 Anomaly Classes</span>
+              <span>•</span>
+              <span>Real-Time Processing</span>
+            </div>
+          </div>
         </div>
       </footer>
     </div>

@@ -3,7 +3,7 @@ FastAPI Backend for Anomaly Detection System
 Professional REST API with WebSocket support for real-time predictions
 """
 
-from fastapi import FastAPI, File, UploadFile, WebSocket, HTTPException
+from fastapi import FastAPI, File, UploadFile, WebSocket, HTTPException, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
@@ -85,7 +85,7 @@ async def startup_event():
         detector = AnomalyDetector(
             model_path=str(model_path),
             config_path=str(config_path),
-            yolo_model="yolov8n.pt",
+            yolo_model="yolov10s.pt",
             device="cuda",
             confidence_threshold=0.7
         )
@@ -233,6 +233,7 @@ async def websocket_stream(websocket: WebSocket):
     """
     Enhanced WebSocket endpoint for real-time multi-modal analysis.
     Features: ML Model + YOLO + Motion + Pose + Tracking + Rules
+    OPTIMIZED: Handles connection timeouts and async processing
     """
     await websocket.accept()
     
@@ -245,38 +246,49 @@ async def websocket_stream(websocket: WebSocket):
     
     print("🔌 WebSocket connected - Enhanced Pipeline Active")
     frame_count = 0
+    last_heartbeat = asyncio.get_event_loop().time()
     
     try:
         while True:
-            # Receive frame data
-            data = await websocket.receive_text()
-            message = json.loads(data)
-            
-            if message['type'] == 'frame':
-                # Decode base64 frame
-                import base64
-                frame_data = base64.b64decode(message['data'])
-                nparr = np.frombuffer(frame_data, np.uint8)
-                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            try:
+                # ⭐ TIMEOUT PROTECTION: Wait max 1 second for frame ⭐
+                data = await asyncio.wait_for(
+                    websocket.receive_text(), 
+                    timeout=1.0
+                )
+                message = json.loads(data)
                 
-                if frame is None:
-                    continue
-                
-                frame_count += 1
-                
-                # Process through unified pipeline
-                result = unified_pipeline.process_frame(frame)
-                
-                # Check for pipeline errors
-                if 'error' in result:
-                    await websocket.send_json({
-                        "error": f"Pipeline error: {result['error']}"
-                    })
-                    continue
-                
-                # PROFESSIONAL FUSION-BASED RESPONSE
-                # Only send when anomaly detected (fusion_score >= 0.70)
-                fusion_data = result.get('fusion', None)
+                if message['type'] == 'frame':
+                    # Decode base64 frame
+                    import base64
+                    frame_data = base64.b64decode(message['data'])
+                    nparr = np.frombuffer(frame_data, np.uint8)
+                    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                    
+                    if frame is None:
+                        continue
+                    
+                    frame_count += 1
+                    
+                    # ⭐ CHECK CONNECTION BEFORE HEAVY PROCESSING ⭐
+                    if websocket.client_state.name != "CONNECTED":
+                        print("⚠️ Client disconnected during processing")
+                        break
+                    
+                    # Process through unified pipeline
+                    result = unified_pipeline.process_frame(frame)
+                    
+                    # Check for pipeline errors
+                    if 'error' in result:
+                        # ⭐ CHECK CONNECTION BEFORE SENDING ERROR ⭐
+                        if websocket.client_state.name == "CONNECTED":
+                            await websocket.send_json({
+                                "error": f"Pipeline error: {result['error']}"
+                            })
+                        continue
+                    
+                    # PROFESSIONAL FUSION-BASED RESPONSE
+                    fusion_data = result.get('fusion', None)
                 
                 response = {
                     "type": "prediction",
@@ -292,6 +304,11 @@ async def websocket_stream(websocket: WebSocket):
                         "is_dangerous": result.get('is_dangerous', False),
                         "summary": result.get('summary', 'Normal activity'),
                         "alerts": result.get('alerts', []),
+                        
+                        # ⭐ RAW DETECTION DATA FOR FRONTEND OVERLAY ⭐
+                        "objects": result['detections'].get('yolo', {}).get('objects', []),
+                        "poses": result['detections'].get('pose', {}).get('poses', []),
+                        "motion": result['detections'].get('motion', {}),
                         
                         # ML Model (for reference)
                         "ml_model": {
@@ -309,14 +326,14 @@ async def websocket_stream(websocket: WebSocket):
                         },
                         
                         # Motion analysis (for reference)
-                        "motion": {
+                        "motion_analysis": {
                             "magnitude": result['detections'].get('motion', {}).get('magnitude', 0.0),
                             "is_unusual": result['detections'].get('motion', {}).get('is_unusual', False),
                             "anomaly_type": result['detections'].get('motion', {}).get('anomaly_type', None)
                         },
                         
                         # Pose estimation (for reference)
-                        "pose": {
+                        "pose_analysis": {
                             "persons_detected": result['detections'].get('pose', {}).get('persons_detected', 0),
                             "is_anomalous": result['detections'].get('pose', {}).get('is_anomalous', False),
                             "anomaly_type": result['detections'].get('pose', {}).get('anomaly_type', None)
@@ -326,22 +343,47 @@ async def websocket_stream(websocket: WebSocket):
                         "tracking": {
                             "total_tracks": result['detections'].get('tracking', {}).get('total_tracks', 0),
                             "tracked_objects": result['detections'].get('tracking', {}).get('tracked_objects', [])
-                        },
+                        }
                         
-                        # Annotated frame
-                        "frame_base64": result.get('frame_base64', '')
+                        # ⭐ REMOVED: frame_base64 - frontend shows direct stream ⭐
                     }
                 }
                 
                 # Send comprehensive fusion-based result
-                await websocket.send_json(response)
+                # ⭐ FINAL CONNECTION CHECK BEFORE SEND ⭐
+                if websocket.client_state.name == "CONNECTED":
+                    await websocket.send_json(response)
+                else:
+                    print("⚠️ Client disconnected, skipping send")
+                    break
+                    
+            except asyncio.TimeoutError:
+                # ⭐ HEARTBEAT: Send ping if no data received ⭐
+                current_time = asyncio.get_event_loop().time()
+                if current_time - last_heartbeat > 5.0:
+                    if websocket.client_state.name == "CONNECTED":
+                        try:
+                            await websocket.send_json({"type": "heartbeat", "timestamp": current_time})
+                            last_heartbeat = current_time
+                        except:
+                            print("⚠️ Heartbeat failed, client disconnected")
+                            break
+                continue
+            except WebSocketDisconnect:
+                print("🔌 Client disconnected gracefully")
+                break
+            except json.JSONDecodeError as e:
+                print(f"⚠️ Invalid JSON received: {e}")
+                continue
                         
+    except WebSocketDisconnect:
+        print("🔌 WebSocket disconnected by client")
     except Exception as e:
         print(f"❌ WebSocket error: {e}")
         import traceback
         traceback.print_exc()
     finally:
-        print("🔌 WebSocket disconnected")
+        print(f"🔌 WebSocket session ended (processed {frame_count} frames)")
 
 
 @app.get("/api/classes")
@@ -386,6 +428,7 @@ async def get_detection_history(limit: int = 50):
         raise HTTPException(status_code=503, detail="Pipeline not initialized")
     
     try:
+        # Use engine method that returns FusedDetection objects for formatting
         history = unified_pipeline.fusion_engine.get_detection_history(limit=limit)
         
         # Format history for frontend
@@ -437,10 +480,11 @@ async def get_detection_statistics():
             "success": True,
             "statistics": {
                 "total_detections": stats['total_detections'],
-                "frames_processed": stats['frames_processed'],
+                # Align with IntelligentFusionEngine.get_statistics() return key
+                "frames_processed": stats.get('total_frames_processed', 0),
                 "anomaly_rate_percent": round(stats['anomaly_rate'] * 100, 2),
-                "average_confidence": round(stats['avg_confidence'], 3),
-                "average_fusion_score": round(stats['avg_fusion_score'], 3),
+                "average_confidence": round(stats['average_confidence'], 3),
+                "average_fusion_score": round(stats['average_fusion_score'], 3),
                 "by_severity": stats['by_severity'],
                 "by_anomaly_type": stats['by_type'],
                 "critical_overrides": sum(1 for d in unified_pipeline.fusion_engine.detection_history 
@@ -473,6 +517,36 @@ async def clear_detection_history():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/save-screenshot")
+async def save_screenshot(file: UploadFile = File(...)):
+    """
+    Save anomaly screenshot to uploads folder
+    """
+    try:
+        # Create screenshots directory
+        screenshots_dir = UPLOAD_DIR / "screenshots"
+        screenshots_dir.mkdir(exist_ok=True)
+        
+        # Save file
+        file_path = screenshots_dir / file.filename
+        contents = await file.read()
+        
+        with open(file_path, 'wb') as f:
+            f.write(contents)
+        
+        print(f"✅ Screenshot saved: {file.filename}")
+        
+        return {
+            "success": True,
+            "filename": file.filename,
+            "path": str(file_path)
+        }
+        
+    except Exception as e:
+        print(f"❌ Error saving screenshot: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 def main():
     """Run the API server."""
     print("="*70)
@@ -482,12 +556,16 @@ def main():
     print("API docs available at http://localhost:8000/docs")
     print("\nPress CTRL+C to stop\n")
     
+    # ⭐ OPTIMIZED WEBSOCKET CONFIGURATION ⭐
     uvicorn.run(
         "app:app",
         host="0.0.0.0",
         port=8000,
         reload=True,
-        log_level="info"
+        log_level="info",
+        ws_ping_interval=20.0,  # Send ping every 20 seconds
+        ws_ping_timeout=20.0,   # Wait 20 seconds for pong
+        timeout_keep_alive=30   # Keep connection alive for 30 seconds
     )
 
 

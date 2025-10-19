@@ -307,14 +307,22 @@ class IntelligentFusionEngine:
         detected_objects = [obj['class'] for obj in yolo_detections]
         bounding_boxes = [obj.get('bbox', (0,0,0,0)) for obj in yolo_detections]
         
-        # Build reasoning
+        # Build reasoning - FILTER OUT NORMAL CLASSIFICATIONS
         if ml_score > 0.5:
             ml_class = ml_result.get('class', 'Unknown')
             ml_conf = ml_result.get('confidence', 0.0)
-            reasoning.append(f"ML Model: {ml_class} ({ml_conf*100:.1f}%)")
+            # ⭐ DON'T SHOW "NormalVideos" - User doesn't care about normal ⭐
+            if ml_class and ml_class.lower() not in ['normalvideos', 'normal', 'normal_videos']:
+                reasoning.append(f"ML Model: {ml_class} ({ml_conf*100:.1f}%)")
         
         if object_score > 0.3:
-            reasoning.append(f"Objects: {', '.join(detected_objects[:5])}")
+            # Filter out generic/normal objects, prioritize threats
+            dangerous_objects = [obj for obj in detected_objects if any(
+                danger in obj.lower() for danger in ['gun', 'knife', 'weapon', 'pistol', 'rifle']
+            )]
+            relevant_objects = dangerous_objects if dangerous_objects else detected_objects[:3]
+            if relevant_objects:
+                reasoning.append(f"Objects: {', '.join(relevant_objects)}")
         
         if pose_score > 0.5:
             pose_type = pose_result.get('anomaly_type', 'Unknown')
@@ -623,6 +631,14 @@ class IntelligentFusionEngine:
     def get_recent_detections(self, limit: int = 50) -> List[Dict]:
         """Get recent anomaly detections (for history display)"""
         return [d.to_dict() for d in self.detection_history[-limit:]]
+
+    def get_detection_history(self, limit: int = 50) -> List[FusedDetection]:
+        """Return recent FusedDetection objects (for internal formatting).
+
+        Note: This preserves backward compatibility with app routes that
+        expect full dataclass instances for custom formatting.
+        """
+        return self.detection_history[-limit:]
     
     def get_detections_by_severity(self, severity: Severity, limit: int = 50) -> List[Dict]:
         """Get detections filtered by severity"""

@@ -19,6 +19,13 @@ from typing import Dict, List, Tuple, Optional
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 from ultralytics import YOLO
+try:
+    # Try to import YOLOv10 (if installed as a separate package or via ultralytics-yolov10)
+    # Some distributions expose a similar API; we handle both cases gracefully.
+    from ultralytics import YOLO as YOLOv10
+    _YOLOV10_AVAILABLE = True
+except Exception:
+    _YOLOV10_AVAILABLE = False
 import sys
 from collections import deque
 from omegaconf import OmegaConf
@@ -84,9 +91,29 @@ class AnomalyDetector:
         print("   ✅ Model loaded successfully")
         
         # Load YOLO for object detection
-        print(f"🎯 Loading YOLO model ({yolo_model})...")
-        self.yolo = YOLO(yolo_model)
-        print("   ✅ YOLO loaded successfully")
+        print(f"� Loading object detector: preferring YOLOv10 when available...")
+        self.detector_name = None
+        self.yolo = None
+        try:
+            if _YOLOV10_AVAILABLE and ("yolov10" in yolo_model.lower() or yolo_model.lower().startswith("yolov10")):
+                # Explicit yolov10 model string
+                self.yolo = YOLOv10(yolo_model)
+                self.detector_name = "YOLOv10"
+            elif _YOLOV10_AVAILABLE:
+                # Allow default v10 small model if user didn't specify
+                # You can change to yolov10n if you prefer nano
+                self.yolo = YOLOv10("yolov10s.pt")
+                self.detector_name = "YOLOv10"
+            else:
+                # Fallback to YOLOv8 via ultralytics
+                self.yolo = YOLO(yolo_model)
+                self.detector_name = "YOLOv8"
+            print(f"   ✅ {self.detector_name} loaded successfully")
+        except Exception as e:
+            print(f"   ❌ Failed to load requested detector ({yolo_model}): {e}")
+            print("   ↩️ Falling back to YOLOv8n")
+            self.yolo = YOLO("yolov8n.pt")
+            self.detector_name = "YOLOv8"
         
         # Class names
         self.class_names = [
@@ -160,37 +187,54 @@ class AnomalyDetector:
     
     def detect_objects(self, frame: np.ndarray) -> Dict:
         """
-        Detect objects using YOLO.
+        Detect and track objects using YOLO with persistent tracking.
         
         Args:
             frame: Input frame (BGR)
             
         Returns:
-            Dict with detected objects and bounding boxes
+            Dict with detected objects, bounding boxes, and tracking IDs
         """
-        results = self.yolo(frame, verbose=False)[0]
-        
+        # ⭐ Use track() instead of () for smooth object tracking
+        # persist=True maintains object IDs across frames
+        results = self.yolo.track(frame, persist=True, verbose=False)[0]
+
         detections = {
             'objects': [],
             'boxes': [],
             'confidences': [],
+            'track_ids': [],  # NEW: Track IDs for smooth movement
             'dangerous': False
         }
-        
+
         for box in results.boxes:
-            class_id = int(box.cls[0])
-            confidence = float(box.conf[0])
-            class_name = results.names[class_id].lower()
-            bbox = box.xyxy[0].cpu().numpy()
+            # Normalize API fields between YOLOv8 and YOLOv10 where possible
+            class_id = int(box.cls[0]) if hasattr(box, 'cls') else int(box.data[0][-1])
+            confidence = float(box.conf[0]) if hasattr(box, 'conf') else float(box.data[0][-2])
             
+            # ⭐ Extract track ID if available
+            track_id = int(box.id[0]) if hasattr(box, 'id') and box.id is not None else None
+            
+            # ultralytics Results exposes names on result
+            names_map = getattr(results, 'names', None) or getattr(self.yolo, 'names', None) or {}
+            class_name = str(names_map.get(class_id, str(class_id))).lower()
+            # xyxy tensor on box; fallback to data
+            if hasattr(box, 'xyxy'):
+                bbox = box.xyxy[0].cpu().numpy()
+            else:
+                # box.data shape [1, 6] (x1,y1,x2,y2,conf,cls)
+                arr = box.data[0].cpu().numpy()
+                bbox = arr[:4]
+
             detections['objects'].append(class_name)
             detections['boxes'].append(bbox)
             detections['confidences'].append(confidence)
-            
+            detections['track_ids'].append(track_id)  # NEW: Store track ID
+
             # Check for dangerous objects
             if any(danger in class_name for danger in self.dangerous_objects):
                 detections['dangerous'] = True
-        
+
         return detections
     
     def preprocess_frame(self, frame: np.ndarray) -> torch.Tensor:

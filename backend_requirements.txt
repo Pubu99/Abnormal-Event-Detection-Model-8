@@ -14,6 +14,7 @@ websockets==12.0
 # Already in main requirements.txt:
 # opencv-python==4.10.0.84
 # ultralytics==8.3.50
+# lap>=0.5.12  # Required for YOLO object tracking
 # torch==2.7.0+cu128
 # torchvision==0.22.0+cu128
 # numpy==1.26.4

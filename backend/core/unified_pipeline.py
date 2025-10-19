@@ -96,7 +96,7 @@ class UnifiedDetectionPipeline:
         }
         
         try:
-            # 1. YOLO Object Detection
+            # 1. YOLO Object Detection with Tracking
             yolo_results = self.anomaly_detector.detect_objects(frame)
             
             # Convert YOLO format for other services
@@ -104,16 +104,19 @@ class UnifiedDetectionPipeline:
             for i, obj_class in enumerate(yolo_results['objects']):
                 bbox = yolo_results['boxes'][i]
                 x1, y1, x2, y2 = map(int, bbox)
+                track_id = yolo_results['track_ids'][i] if 'track_ids' in yolo_results else None
                 yolo_detections.append({
                     'class': obj_class,
                     'bbox': (x1, y1, x2 - x1, y2 - y1),  # x, y, w, h
-                    'confidence': yolo_results['confidences'][i]
+                    'confidence': yolo_results['confidences'][i],
+                    'track_id': track_id  # NEW: Tracking ID for smooth movement
                 })
             
             result['detections']['yolo'] = {
-                'objects': yolo_results['objects'],
+                'objects': yolo_detections,  # ⭐ FIXED: Send full objects with bbox, not just class names
                 'count': len(yolo_results['objects']),
-                'dangerous_objects': yolo_results.get('dangerous', False)
+                'dangerous_objects': yolo_results.get('dangerous', False),
+                'class_names': yolo_results['objects']  # Keep original for backwards compatibility
             }
             
             # 2. ML Model Prediction (if frame buffer ready)
@@ -214,6 +217,8 @@ class UnifiedDetectionPipeline:
                 result['fusion'] = {
                     'anomaly_type': fusion_detection.anomaly_type.value,
                     'severity': fusion_detection.severity.value,
+                    # Provide a final_decision field for UI compatibility
+                    'final_decision': fusion_detection.severity.value,
                     'fusion_score': round(fusion_detection.fusion_score, 3),
                     'confidence': round(fusion_detection.confidence, 3),
                     'reasoning': fusion_detection.reasoning,
@@ -281,8 +286,41 @@ class UnifiedDetectionPipeline:
                         'modalities_agreed': fusion_detection.consensus_count
                     }
                 }]
+
+            # 8. Rule Engine evaluation (context-aware alerts)
+            rule_result = self.rule_engine.evaluate(
+                yolo_detections=yolo_detections,
+                motion_result=result['detections']['motion'],
+                pose_result=result['detections']['pose'],
+                anomaly_class=(ml_prediction.get('class') if ml_prediction else None),
+                anomaly_confidence=(ml_prediction.get('confidence') if ml_prediction else None)
+            )
+
+            # Merge alerts: keep fusion alert(s) and add rule alerts
+            result['alerts'] = (result.get('alerts', []) or []) + [
+                {
+                    'level': a.level.value,
+                    'title': a.title,
+                    'message': a.message,
+                    'confidence': a.confidence,
+                    'timestamp': a.timestamp,
+                    'location': a.location,
+                    'objects_involved': a.objects_involved,
+                    'metadata': a.metadata,
+                }
+                for a in rule_result.alerts
+            ]
+
+            # Elevate threat level to worst between fusion and rules
+            severity_rank = { 'INFO': 0, 'LOW': 1, 'MEDIUM': 2, 'HIGH': 3, 'CRITICAL': 4 }
+            current_level = result.get('threat_level', 'INFO')
+            rule_level = rule_result.threat_level.value
+            result['threat_level'] = max(current_level, rule_level, key=lambda k: severity_rank.get(k, 0))
+            result['is_dangerous'] = result['threat_level'] in ['HIGH', 'CRITICAL']
+            if rule_result.summary and rule_result.alerts:
+                result['summary'] = rule_result.summary
             
-            # 8. Create Professional Visualization
+            # 9. Create Professional Visualization
             vis_frame = self._create_visualization(
                 frame,
                 yolo_detections,
@@ -293,8 +331,13 @@ class UnifiedDetectionPipeline:
                 fusion_detection
             )
             
-            # Encode frame as JPEG base64
-            _, buffer = cv2.imencode('.jpg', vis_frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            # ⭐ OPTIMIZED ENCODING FOR SMOOTH REAL-TIME STREAMING ⭐
+            # Quality 70 = Optimal balance for real-time (faster encoding/decoding)
+            # JPEG_OPTIMIZE = 1 enables Huffman optimization for smaller files
+            _, buffer = cv2.imencode('.jpg', vis_frame, [
+                cv2.IMWRITE_JPEG_QUALITY, 70,  # Reduced to 70 for speed
+                cv2.IMWRITE_JPEG_OPTIMIZE, 1   # Enable optimization
+            ])
             result['frame_base64'] = base64.b64encode(buffer).decode('utf-8')
             
         except Exception as e:
