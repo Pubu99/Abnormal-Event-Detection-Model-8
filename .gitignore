@@ -84,6 +84,8 @@ notebooks/.ipynb_checkpoints/
 # Legacy documentation (keep only current docs)
 docs/OLD/
 docs/NEW/
+docs/NEW2/
+docs/NEW3/
 
 # ========================================
 # Python Standard Ignores

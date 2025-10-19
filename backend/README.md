@@ -88,8 +88,8 @@ cd backend
 # Create venv
 python -m venv venv
 
-# Activate venv
-.\venv\Scripts\Activate
+# Activate venv (Windows PowerShell)
+.\venv\Scripts\Activate.ps1
 
 # Upgrade pip
 python -m pip install --upgrade pip
@@ -173,7 +173,7 @@ cd backend
 
 # Create and activate venv
 python -m venv venv
-.\venv\Scripts\Activate
+.\venv\Scripts\Activate.ps1
 
 # Upgrade pip
 python -m pip install --upgrade pip

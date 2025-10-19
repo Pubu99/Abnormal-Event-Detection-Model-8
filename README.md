@@ -73,7 +73,7 @@ A **production-grade** enterprise video surveillance system that combines cuttin
 
 2. **Object Detection (25% weight)** - Critical object identification
 
-   - Model: YOLOv10/YOLOv8n with ByteTrack object tracking
+   - Model: YOLOv10/YOLOv8 with persistent track IDs; centroid tracker for trajectories
    - Detections: Weapons (knife, gun), persons, vehicles, fire, smoke
    - Features: Real-time bounding boxes, confidence scores, persistent track IDs
    - Alert: Immediate CRITICAL override on weapon detection
@@ -394,10 +394,10 @@ Real-time display of intelligent fusion results:
 
 - **Final Decision** with confidence percentage
 - **Score Breakdown** for all 4 modalities:
-  - ML Model score (50% weight)
+  - ML Model score (40% weight)
   - Object Detection score (25% weight)
-  - Pose Estimation score (15% weight)
-  - Motion Analysis score (10% weight)
+  - Pose Estimation score (20% weight)
+  - Motion Analysis score (15% weight)
 - **Reasoning Lines** explaining decision logic
 - **Override Status** showing if safety rules triggered
 
@@ -545,13 +545,13 @@ Abnormal-Event-Detection-Model-8/
 │  └────────────────────────────────────────────────────────────┘ │
 │                                                                   │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
-│  │  ML Model    │  │  YOLOv8n     │  │  MediaPipe   │          │
-│  │  (50%)       │  │  (25%)       │  │  (15%)       │          │
+│  │  ML Model    │  │  YOLOv8      │  │  MediaPipe   │          │
+│  │  (40%)       │  │  (25%)       │  │  (20%)       │          │
 │  └──────────────┘  └──────────────┘  └──────────────┘          │
 │                                                                   │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
 │  │ Optical Flow │  │   Tracker    │  │ Speed Calc   │          │
-│  │ (10%)        │  │              │  │              │          │
+│  │ (15%)        │  │              │  │              │          │
 │  └──────────────┘  └──────────────┘  └──────────────┘          │
 │                                                                   │
 │  ┌────────────────────────────────────────────────────────────┐ │
@@ -760,6 +760,7 @@ Detailed guides for specific features:
 - **[LIVE_DETECTION_GUIDE.md](docs/NEW/LIVE_DETECTION_GUIDE.md)** - Using real-time detection with webcam
 - **[RULES_GUIDE.md](docs/NEW/RULES_GUIDE.md)** - Context-aware rule engine configuration
 - **[ENHANCED_SYSTEM_GUIDE.md](docs/NEW/ENHANCED_SYSTEM_GUIDE.md)** - Multi-modal detection system overview
+- **[POST_TRAINING_RUNTIME_GUIDE.md](docs/POST_TRAINING_RUNTIME_GUIDE.md)** - End-to-end runtime flow after training (no code)
 
 ### 📊 Research & Analysis
 
@@ -1026,7 +1027,7 @@ For complete training methodology and hyperparameter details, see [TRAINING_METH
 The main configuration file `config.yaml` controls:
 
 - Model settings: path to weights, device (cuda/cpu), sequence length
-- Fusion engine: detection weights (ML: 0.50, YOLO: 0.25, Pose: 0.15, Motion: 0.10)
+- Fusion engine: detection weights (ML: 0.40, YOLO: 0.25, Pose: 0.20, Motion: 0.15)
 - Thresholds: normal (0.3), suspicious (0.5), abnormal (0.7)
 - Server settings: host, port, reload options
 
@@ -1223,7 +1224,7 @@ If you use this project in your research, please cite the UCF Crime dataset pape
 - ✅ **Auto-Evidence Capture** - Screenshot system with metadata
 - ✅ **Comprehensive Documentation** - 30,500+ words
 - ✅ **GPU Acceleration** - CUDA support
-- ✅ **Object Tracking** - ByteTrack integration with persistent IDs
+- ✅ **Object Tracking** - Centroid-based tracker with persistent IDs
 - ✅ **Context-Aware Rules** - 8 intelligent rules for alerting
 
 ### 🔄 In Progress
