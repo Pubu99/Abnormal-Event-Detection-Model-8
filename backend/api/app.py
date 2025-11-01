@@ -82,11 +82,20 @@ async def startup_event():
         model_path = project_root / "models" / "best_model.pth"
         config_path = project_root / "configs" / "config_research_enhanced.yaml"
         
+        # Auto-select device: prefer CUDA when available, fall back to CPU
+        try:
+            import torch
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        except Exception:
+            device = "cpu"
+
+        print(f"   Device selected: {device}")
+
         detector = AnomalyDetector(
             model_path=str(model_path),
             config_path=str(config_path),
             yolo_model="yolov10s.pt",
-            device="cuda",
+            device=device,
             confidence_threshold=0.7
         )
         

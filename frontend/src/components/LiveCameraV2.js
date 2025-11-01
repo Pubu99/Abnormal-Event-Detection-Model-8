@@ -10,6 +10,8 @@ export default function LiveCameraV2({
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [status, setStatus] = useState("Disconnected");
   const [fps, setFps] = useState(0);
+  const [devices, setDevices] = useState([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState(null);
 
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -19,10 +21,37 @@ export default function LiveCameraV2({
   const fpsCounterRef = useRef({ count: 0, lastTime: Date.now() });
 
   useEffect(() => {
+    // Enumerate devices on mount
+    enumerateDevices();
+
     return () => {
       stopCamera();
     };
   }, []);
+
+  const enumerateDevices = async () => {
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+        console.warn("enumerateDevices() not supported.");
+        return;
+      }
+
+      const list = await navigator.mediaDevices.enumerateDevices();
+      const videoInputs = list.filter((d) => d.kind === "videoinput");
+      setDevices(videoInputs);
+
+      // If no selection yet, pick default camera (first)
+      if (!selectedDeviceId && videoInputs.length > 0) {
+        setSelectedDeviceId(videoInputs[0].deviceId);
+      }
+    } catch (err) {
+      console.error("Error enumerating devices:", err);
+    }
+  };
+
+  const handleDeviceChange = (e) => {
+    setSelectedDeviceId(e.target.value);
+  };
 
   const startCamera = async () => {
     try {
@@ -33,6 +62,7 @@ export default function LiveCameraV2({
           width: { ideal: 1280 },
           height: { ideal: 720 },
           facingMode: "user",
+          deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
         },
       };
 
@@ -377,6 +407,36 @@ export default function LiveCameraV2({
       {/* Controls */}
       <div className="p-6">
         <div className="grid grid-cols-2 gap-4">
+            {/* Device selector */}
+            <div className="col-span-2">
+              <label className="text-slate-300 text-sm">Select Camera</label>
+              <div className="flex items-center gap-2 mt-1">
+                <select
+                  value={selectedDeviceId || ""}
+                  onChange={handleDeviceChange}
+                  className="bg-slate-800 text-white py-2 px-3 rounded-lg w-full"
+                >
+                  {devices.length === 0 ? (
+                    <option value="">No cameras found</option>
+                  ) : (
+                    devices.map((d) => (
+                      <option key={d.deviceId} value={d.deviceId}>
+                        {d.label || `Camera (${d.deviceId})`}
+                      </option>
+                    ))
+                  )}
+                </select>
+                <button
+                  onClick={enumerateDevices}
+                  className="bg-slate-700 hover:bg-slate-600 text-white font-medium py-2 px-3 rounded-lg"
+                  title="Refresh device list"
+                >
+                  Refresh
+                </button>
+              </div>
+              <p className="text-slate-400 text-xs mt-1">If you use OBS Virtual Camera, start the Virtual Camera in OBS first, then click Refresh and select it here.</p>
+            </div>
+
           {/* Camera Control */}
           {!isConnected ? (
             <button
