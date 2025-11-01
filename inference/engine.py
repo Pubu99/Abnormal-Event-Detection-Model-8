@@ -78,15 +78,34 @@ class AnomalyDetector:
         # Load your trained model
         print(f"📦 Loading trained model from {model_path}...")
         self.model = create_research_model(self.config, device=self.device)
-        checkpoint = torch.load(model_path, map_location=self.device)
         
-        # Handle compiled model state dict
-        state_dict = checkpoint.get('model_state_dict', checkpoint)
-        if any(key.startswith('_orig_mod.') for key in state_dict.keys()):
-            state_dict = {key.replace('_orig_mod.', ''): value 
-                         for key, value in state_dict.items()}
-        
-        self.model.load_state_dict(state_dict)
+        # Robust checkpoint loading for PyTorch >=2.6 (weights_only default)
+        try:
+            checkpoint = torch.load(model_path, map_location=self.device)
+        except Exception:
+            print("⚠️ Safe checkpoint load failed, retrying with weights_only=False (trusted file)...")
+            checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
+
+        # Normalize to a state_dict regardless of how the checkpoint was saved
+        if isinstance(checkpoint, torch.nn.Module):
+            state_dict = checkpoint.state_dict()
+        elif isinstance(checkpoint, dict):
+            if 'model_state_dict' in checkpoint:
+                state_dict = checkpoint['model_state_dict']
+            elif 'state_dict' in checkpoint:
+                state_dict = checkpoint['state_dict']
+            elif 'model' in checkpoint and isinstance(checkpoint['model'], torch.nn.Module):
+                state_dict = checkpoint['model'].state_dict()
+            else:
+                state_dict = checkpoint
+        else:
+            raise ValueError("Unsupported checkpoint format. Expected nn.Module or dict.")
+
+        # Remove potential compile-time prefix artifacts
+        if any(isinstance(k, str) and k.startswith('_orig_mod.') for k in state_dict.keys()):
+            state_dict = {k.replace('_orig_mod.', ''): v for k, v in state_dict.items()}
+
+        self.model.load_state_dict(state_dict, strict=False)
         self.model.eval()
         print("   ✅ Model loaded successfully")
         

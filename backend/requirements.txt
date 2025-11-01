@@ -12,11 +12,11 @@ websockets==12.0
 # ===========================================
 # Deep Learning & Computer Vision
 # ===========================================
-# Note: Install PyTorch with CUDA support first:
---extra-index-url https://download.pytorch.org/whl/cu128
-torch==2.7.0+cu128
-torchvision==0.22.0+cu128
-torchaudio==2.7.0+cu128
+# Note: CPU-only PyTorch installation (no CUDA):
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.7.0+cpu
+torchvision==0.22.0+cpu
+torchaudio==2.7.0+cpu
 
 
 # Then install these:
@@ -43,7 +43,7 @@ mediapipe==0.10.21
 numpy==1.26.4
 pandas==2.2.3
 scikit-learn==1.5.2
-scipy==1.14.1
+scipy==1.13.1  # 1.14+ requires Python >=3.10; pin 1.13.1 for Py39 compatibility
 
 # ===========================================
 # Configuration & Utilities

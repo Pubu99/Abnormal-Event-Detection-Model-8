@@ -86,7 +86,7 @@ async def startup_event():
             model_path=str(model_path),
             config_path=str(config_path),
             yolo_model="yolov10s.pt",
-            device="cuda",
+            device="cpu",  # Use CPU mode (no CUDA)
             confidence_threshold=0.7
         )
         
@@ -557,11 +557,12 @@ def main():
     print("\nPress CTRL+C to stop\n")
     
     # ⭐ OPTIMIZED WEBSOCKET CONFIGURATION ⭐
+    # Note: reload=False to avoid Windows handle issues during startup
     uvicorn.run(
-        "app:app",
+        app,  # Pass app object directly instead of module string
         host="0.0.0.0",
         port=8000,
-        reload=True,
+        reload=False,  # Disable reload on Windows to prevent handle errors
         log_level="info",
         ws_ping_interval=20.0,  # Send ping every 20 seconds
         ws_ping_timeout=20.0,   # Wait 20 seconds for pong
