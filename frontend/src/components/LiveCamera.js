@@ -198,7 +198,7 @@ function LiveCamera({ onDetection, onAnomaly, onFrame }) {
     setStatusMessage("");
   };
 
-  const startAnalysis = () => {
+  const startAnalysis = async () => {
     if (!cameraActive || !videoRef.current) {
       setStatusMessage("Camera not active");
       console.error("❌ Cannot start analysis: Camera not active");
@@ -206,11 +206,28 @@ function LiveCamera({ onDetection, onAnomaly, onFrame }) {
     }
 
     console.log("🚀 Starting live analysis...");
-    console.log("📡 Connecting to WebSocket: ws://localhost:8000/ws/stream");
     setStatusMessage("Connecting to analysis server...");
 
+    // Resolve camera id from backend (use first enabled camera) to match server WS path
+    let cameraId = "cam-001"; // fallback
+    try {
+      const resp = await fetch("http://localhost:8000/api/cameras");
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data && Array.isArray(data.cameras) && data.cameras.length > 0) {
+          const firstEnabled = data.cameras.find((c) => c.enabled) || data.cameras[0];
+          cameraId = firstEnabled.id || cameraId;
+        }
+      }
+    } catch (e) {
+      console.warn("Could not fetch cameras from backend, using fallback cameraId", e);
+    }
+
+    const wsUrl = `ws://localhost:8000/ws/stream/${cameraId}`;
+    console.log("📡 Connecting to WebSocket:", wsUrl);
+
     // Connect WebSocket
-    const ws = new WebSocket("ws://localhost:8000/ws/stream");
+    const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
     ws.onopen = () => {

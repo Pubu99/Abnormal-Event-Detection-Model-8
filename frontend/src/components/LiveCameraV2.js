@@ -176,7 +176,7 @@ export default function LiveCameraV2({
     setFps(0);
   };
 
-  const startAnalysis = () => {
+  const startAnalysis = async () => {
     if (!isConnected) {
       alert("Please connect camera first");
       return;
@@ -185,7 +185,22 @@ export default function LiveCameraV2({
     try {
       setStatus("Connecting to analysis server...");
 
-      const ws = new WebSocket("ws://localhost:8000/ws/stream");
+      // Resolve camera id from backend to target correct websocket path
+      let cameraId = "cam-001";
+      try {
+        const resp = await fetch("http://localhost:8000/api/cameras");
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data && Array.isArray(data.cameras) && data.cameras.length > 0) {
+            const firstEnabled = data.cameras.find((c) => c.enabled) || data.cameras[0];
+            cameraId = firstEnabled.id || cameraId;
+          }
+        }
+      } catch (e) {
+        console.warn("Could not fetch cameras from backend, using fallback cameraId", e);
+      }
+
+      const ws = new WebSocket(`ws://localhost:8000/ws/stream/${cameraId}`);
       wsRef.current = ws;
 
       ws.onopen = () => {
