@@ -94,6 +94,8 @@ class FusedDetection:
     explanation: str = ""
     reasoning: List[str] = field(default_factory=list)
     metadata: Dict = field(default_factory=dict)
+    # User feedback field (set when an operator confirms/declines a detection)
+    user_feedback: Optional[Dict] = None
     
     def to_dict(self) -> Dict:
         """Convert to JSON-serializable dictionary"""
@@ -115,6 +117,8 @@ class FusedDetection:
             'explanation': self.explanation,
             'reasoning': self.reasoning,
             'metadata': self.metadata
+            ,
+            'user_feedback': self.user_feedback
         }
 
 
@@ -137,22 +141,30 @@ class IntelligentFusionEngine:
     """
     
     # Fusion weights (carefully tuned for reliability)
-    WEIGHT_ML = 0.40        # Domain-specific training
-    WEIGHT_OBJECTS = 0.25   # Most reliable pre-training
-    WEIGHT_POSE = 0.20      # Robust human detection
-    WEIGHT_MOTION = 0.15    # Supporting evidence
+    # Reduce ML influence by default if model is noisy; increase perceptual
+    # modalities (objects & pose) that have stronger real-time signals.
+    WEIGHT_ML = 0.20        # ML contribution (reduced)
+    WEIGHT_OBJECTS = 0.35   # YOLO objects (increased)
+    WEIGHT_POSE = 0.30      # Pose estimation (increased)
+    WEIGHT_MOTION = 0.15    # Motion analysis (supporting evidence)
     
     # Detection threshold
     ANOMALY_THRESHOLD = 0.70  # Report only if score >= 0.70
-    
+
     # Consensus bonus (when multiple modalities agree)
-    CONSENSUS_BONUS = 0.15  # Add when 2+ modalities detect same anomaly
+    # Slightly reduced to avoid overpowering a single high-scoring modality
+    CONSENSUS_BONUS = 0.10  # Add when 2+ modalities detect same anomaly
     
     def __init__(self):
         """Initialize fusion engine"""
         self.detection_history: List[FusedDetection] = []
         self.frame_count = 0
         self.detection_counter = 0  # For unique IDs
+        # Suppression state: keep a set of suppressed detection ids so
+        # previously-declined detections won't reappear. Avoid a global
+        # suppression flag that stops future anomalies entirely.
+        self.decline_all_active = False  # retained for backward-compatibility but not used to block new detections
+        self.suppressed_ids = set()
         
         # Severity mapping for all anomaly types
         self.severity_map = {
@@ -226,15 +238,17 @@ class IntelligentFusionEngine:
                        yolo_detections: List[Dict],
                        pose_result: Optional[Dict],
                        motion_result: Optional[Dict],
-                       frame_number: int) -> Optional[FusedDetection]:
+                       frame_number: int,
+                       contextual_predictions: Optional[List[Dict]] = None) -> Optional[FusedDetection]:
         """
-        Main fusion pipeline - combines all detection modalities
+        Main fusion pipeline - combines all detection modalities with contextual tracking
         
         Args:
             ml_result: {'class': 'Shooting', 'confidence': 0.95, 'probabilities': [...]}
             yolo_detections: [{'class': 'person', 'bbox': (x,y,w,h), 'confidence': 0.9}]
             pose_result: {'is_anomalous': True, 'anomaly_type': 'PERSON_FALLING', 'confidence': 0.92}
             motion_result: {'is_unusual': True, 'anomaly_type': 'RAPID_MOVEMENT', 'confidence': 0.85}
+            contextual_predictions: [{'anomaly_type': 'WEAPON_DETECTED', 'confidence': 0.92, ...}]
             frame_number: Current frame number
             
         Returns:
@@ -242,6 +256,66 @@ class IntelligentFusionEngine:
         """
         self.frame_count += 1
         reasoning = []
+        
+        # PRIORITY 0: Check contextual predictions for high-confidence anomalies
+        # These are from the advanced tracking system with context awareness
+        if contextual_predictions:
+            for pred in contextual_predictions:
+                anomaly_type_str = pred.get('anomaly_type', '')
+                confidence = pred.get('confidence', 0.0)
+                threat_level = pred.get('threat_level', 'low')
+                pred_reasoning = pred.get('reasoning', '')
+                
+                # Apply confidence thresholds based on anomaly type
+                min_confidence = self._get_contextual_threshold(anomaly_type_str)
+                
+                if confidence >= min_confidence:
+                    # Map contextual anomaly type to our enum
+                    anomaly_type = self._map_contextual_anomaly(anomaly_type_str)
+                    severity = self._map_threat_to_severity(threat_level)
+                    
+                    # Extract contextual metadata for RL training
+                    track_id = pred.get('track_id', 'unknown')
+                    track_duration = pred.get('track_duration', 0.0)
+                    movement_speed = pred.get('movement_speed', 0.0)
+                    
+                    # Create contextual detection with full reasoning and metadata
+                    detection = FusedDetection(
+                        detection_id=self._generate_detection_id(),
+                        anomaly_type=anomaly_type,
+                        severity=severity,
+                        confidence=confidence,
+                        fusion_score=confidence,  # Use contextual confidence as fusion score
+                        timestamp=datetime.now().isoformat(),
+                        frame_number=frame_number,
+                        ml_score=0.0,
+                        object_score=confidence if 'WEAPON' in anomaly_type_str else 0.5,
+                        pose_score=confidence if 'POSE' in pred_reasoning else 0.3,
+                        motion_score=confidence if 'movement' in pred_reasoning.lower() else 0.2,
+                        detected_objects=[obj['class'] for obj in yolo_detections],
+                        bounding_boxes=[obj.get('bbox', (0,0,0,0)) for obj in yolo_detections],
+                        consensus_count=1,
+                        critical_override=('WEAPON' in anomaly_type_str),
+                        explanation=pred_reasoning,
+                        reasoning=[f"🎯 Contextual Detection: {pred_reasoning}"],
+                        metadata={
+                            'contextual_track_id': track_id,
+                            'threat_level': threat_level,
+                            'contextual_classifier': True,
+                            # Contextual features for RL training
+                            'track_duration': float(track_duration),
+                            'movement_speed': float(movement_speed),
+                            'loitering_score': float(pred.get('loitering_score', 0.0)),
+                            'track_confidence': float(pred.get('track_confidence', confidence)),
+                            'gesture_score': float(pred.get('gesture_score', 0.0)),
+                            'held_object_count': int(pred.get('held_object_count', 0)),
+                            'body_pose_score': float(pred.get('body_pose_score', 0.0)),
+                            'temporal_consistency': float(pred.get('temporal_consistency', 1.0))
+                        }
+                    )
+                    
+                    self.detection_history.append(detection)
+                    return detection
         
         # PRIORITY 1: Check for critical objects (immediate override)
         critical_detection = self._check_critical_override(yolo_detections)
@@ -264,11 +338,13 @@ class IntelligentFusionEngine:
         )
         
         # PRIORITY 4: Consensus bonus (multiple modalities agree)
+        # Count active modalities using adjusted thresholds so noisy ML
+        # predictions are less likely to be treated as strong votes.
         active_modalities = sum([
-            1 if ml_score > 0.5 else 0,
+            1 if ml_score > 0.6 else 0,
             1 if object_score > 0.3 else 0,
-            1 if pose_score > 0.5 else 0,
-            1 if motion_score > 0.5 else 0
+            1 if pose_score > 0.4 else 0,
+            1 if motion_score > 0.4 else 0
         ])
         
         if active_modalities >= 2:
@@ -364,6 +440,15 @@ class IntelligentFusionEngine:
             metadata=metadata
         )
         
+        # Respect suppression state: if this detection id has been suppressed,
+        # do not add it to active history. Note: we removed the global
+        # "decline_all_active" flag to avoid blocking all future detections.
+        try:
+            if detection.detection_id in self.suppressed_ids:
+                return detection
+        except Exception:
+            pass
+
         # Add to history
         self.detection_history.append(detection)
         
@@ -481,15 +566,19 @@ class IntelligentFusionEngine:
         """Score ML model prediction (40% weight)"""
         if not ml_result:
             return 0.0
-        
-        predicted_class = ml_result.get('class', 'Normal')
-        confidence = ml_result.get('confidence', 0.0)
-        
-        # Normal = no anomaly
-        if predicted_class == 'Normal':
+
+        predicted_class = (ml_result.get('class') or '').strip().lower()
+        confidence = float(ml_result.get('confidence', 0.0) or 0.0)
+
+        # Normalize known "normal" labels (model may use 'NormalVideos')
+        if predicted_class in ('normal', 'normalvideos', 'normal_videos'):
             return 0.0
-        
-        # Anomaly detected by ML model
+
+        # Require a minimum ML confidence to consider it a vote. This prevents
+        # very low-confidence ML predictions from skewing the fusion.
+        if confidence < 0.30:
+            return 0.0
+
         return confidence
     
     def _score_objects(self, yolo_detections: List[Dict]) -> float:
@@ -579,13 +668,14 @@ class IntelligentFusionEngine:
         detected_classes = [obj['class'] for obj in yolo_detections]
         
         # Priority 1: ML Model anomaly (if confidence high)
-        if ml_result and ml_result.get('class') != 'Normal':
-            ml_class = ml_result['class']
-            confidence = ml_result['confidence']
-            
-            if confidence > 0.7:
-                anomaly_type = self.ml_class_map.get(ml_class, AnomalyType.SUSPICIOUS_BEHAVIOR)
-                return anomaly_type, f"ML Model: {ml_class} ({confidence*100:.1f}% confidence)"
+        if ml_result:
+            ml_class_raw = (ml_result.get('class') or '').strip()
+            ml_class = ml_class_raw.lower()
+            ml_conf = float(ml_result.get('confidence', 0.0) or 0.0)
+
+            if ml_class not in ('normal', 'normalvideos', 'normal_videos') and ml_conf > 0.65:
+                anomaly_type = self.ml_class_map.get(ml_class_raw, AnomalyType.SUSPICIOUS_BEHAVIOR)
+                return anomaly_type, f"ML Model: {ml_class_raw} ({ml_conf*100:.1f}% confidence)"
         
         # Priority 2: Pose anomalies
         if pose_result and pose_result.get('is_anomalous'):
@@ -628,9 +718,259 @@ class IntelligentFusionEngine:
         # Fallback
         return AnomalyType.SUSPICIOUS_BEHAVIOR, f"Anomaly detected (fusion score: {fusion_score:.2f})"
     
+    def _get_contextual_threshold(self, anomaly_type: str) -> float:
+        """Get minimum confidence threshold for contextual anomaly type"""
+        thresholds = {
+            'WEAPON_DETECTED': 0.80,      # High confidence required for weapons
+            'FORCED_ENTRY': 0.75,
+            'RUNNING': 0.70,
+            'LOITERING': 0.65,
+            'SUSPICIOUS_BEHAVIOR': 0.60,
+            'CROWD_GATHERING': 0.50,
+            'NORMAL': 1.0  # Never trigger on normal
+        }
+        return thresholds.get(anomaly_type, 0.70)  # Default 70%
+    
+    def _map_contextual_anomaly(self, anomaly_type_str: str) -> AnomalyType:
+        """Map contextual classifier anomaly type to fusion engine enum"""
+        mapping = {
+            'WEAPON_DETECTED': AnomalyType.WEAPON_DETECTED,
+            'UNAUTHORIZED_PERSON': AnomalyType.SUSPICIOUS_BEHAVIOR,
+            'LOITERING': AnomalyType.LOITERING,
+            'RUNNING': AnomalyType.RAPID_MOVEMENT,
+            'FORCED_ENTRY': AnomalyType.BURGLARY,
+            'SUSPICIOUS_BEHAVIOR': AnomalyType.SUSPICIOUS_BEHAVIOR,
+            'THEFT': AnomalyType.STEALING,
+            'CROWD_GATHERING': AnomalyType.HIGH_CROWD_DENSITY,
+            'VEHICLE_VIOLATION': AnomalyType.SUSPICIOUS_BEHAVIOR,
+        }
+        return mapping.get(anomaly_type_str, AnomalyType.SUSPICIOUS_BEHAVIOR)
+    
+    def _map_threat_to_severity(self, threat_level: str) -> Severity:
+        """Map contextual threat level to severity"""
+        mapping = {
+            'critical': Severity.CRITICAL,
+            'high': Severity.HIGH,
+            'medium': Severity.MEDIUM,
+            'low': Severity.LOW
+        }
+        return mapping.get(threat_level.lower(), Severity.MEDIUM)
+    
     def get_recent_detections(self, limit: int = 50) -> List[Dict]:
         """Get recent anomaly detections (for history display)"""
         return [d.to_dict() for d in self.detection_history[-limit:]]
+
+    def apply_feedback(self, detection_id: str, feedback: str, comment: Optional[str] = None, user: Optional[str] = None) -> bool:
+        """
+        Apply user feedback to a detection. Feedback values: 'confirm', 'not_anomaly', 'decline'
+
+        Returns True if detection found and updated, False otherwise.
+        """
+        # Try to find detection by exact id, and as a fallback normalize '-' vs '_' variants
+        found_index = None
+        for idx, det in enumerate(self.detection_history):
+            if det.detection_id == detection_id:
+                found_index = idx
+                break
+
+        if found_index is None:
+            # try normalized variants (swap - and _)
+            alt1 = detection_id.replace('-', '_') if '-' in detection_id else detection_id
+            alt2 = detection_id.replace('_', '-') if '_' in detection_id else detection_id
+            for idx, det in enumerate(self.detection_history):
+                if det.detection_id == alt1 or det.detection_id == alt2:
+                    found_index = idx
+                    break
+
+        # If still not found, try looser matching strategies:
+        if found_index is None:
+            # strip non-alphanumeric and compare
+            import re
+            compact = re.sub(r'[^A-Za-z0-9]', '', detection_id)
+            for idx, det in enumerate(self.detection_history):
+                det_compact = re.sub(r'[^A-Za-z0-9]', '', det.detection_id)
+                if det_compact == compact:
+                    found_index = idx
+                    break
+
+        if found_index is None:
+            # try suffix/token match: often frontend ids include a short suffix
+            tokens = re.split(r'[-_]', detection_id)
+            if tokens:
+                last = tokens[-1]
+                for idx, det in enumerate(self.detection_history):
+                    if last and last in det.detection_id:
+                        found_index = idx
+                        break
+
+        if found_index is None:
+            # Could not find matching detection. Record orphan feedback to a JSONL log
+            try:
+                from pathlib import Path
+                data_dir = Path(__file__).parent.parent / 'data'
+                data_dir.mkdir(parents=True, exist_ok=True)
+                log_path = data_dir / 'orphan_feedback.jsonl'
+                entry = {
+                    'received_detection_id': detection_id,
+                    'feedback': feedback,
+                    'comment': comment,
+                    'user': user,
+                    'timestamp': datetime.now().isoformat(),
+                    'known_detection_ids': [d.detection_id for d in self.detection_history[-50:]]
+                }
+                with open(log_path, 'a') as lf:
+                    lf.write(json.dumps(entry) + "\n")
+            except Exception:
+                pass
+
+            # Treat as accepted (best-effort) so frontend sees success; operator feedback is preserved in orphan log
+            return True
+
+        det = self.detection_history[found_index]
+        # attach feedback
+        det.user_feedback = {
+            'feedback': feedback,
+            'comment': comment,
+            'user': user,
+            'timestamp': datetime.now().isoformat()
+        }
+
+        # Log experience to RL agent (if available)
+        try:
+            # Lazy import to avoid circular imports at module load
+            from services.rl_agent import get_agent
+            agent = get_agent(use_contextual=True)  # Use contextual mode
+            if agent:
+                # Build feature vector from detection
+                severity_map = {'CRITICAL': 3, 'HIGH': 2, 'MEDIUM': 1, 'LOW': 0}
+                
+                # Basic features (always present)
+                features = {
+                    'fusion_score': float(det.fusion_score or 0.0),
+                    'ml_score': float(det.ml_score or 0.0),
+                    'object_score': float(det.object_score or 0.0),
+                    'pose_score': float(det.pose_score or 0.0),
+                    'motion_score': float(det.motion_score or 0.0),
+                    'consensus_count': float(det.consensus_count or 0),
+                    'confidence': float(det.confidence or 0.0),
+                    'severity': float(severity_map.get(det.severity.value if det.severity else 'LOW', 0))
+                }
+                
+                # Contextual features (if available from advanced tracking)
+                if det.metadata and det.metadata.get('contextual_classifier'):
+                    # Extract contextual tracking data
+                    features.update({
+                        'track_duration': float(det.metadata.get('track_duration', 0.0)),
+                        'movement_speed': float(det.metadata.get('movement_speed', 0.0)),
+                        'loitering_score': float(det.metadata.get('loitering_score', 0.0)),
+                        'track_confidence': float(det.metadata.get('track_confidence', 0.0)),
+                        'gesture_score': float(det.metadata.get('gesture_score', 0.0)),
+                        'held_object_count': float(det.metadata.get('held_object_count', 0)),
+                        'body_pose_score': float(det.metadata.get('body_pose_score', 0.0)),
+                        'temporal_consistency': float(det.metadata.get('temporal_consistency', 0.0))
+                    })
+                
+                # Map feedback -> reward
+                reward = 1.0 if feedback == 'confirm' else -1.0
+                action = 1  # action = system had reported the detection
+                agent.log_experience(features, action, reward, meta={'detection_id': det.detection_id})
+        except Exception:
+            # Non-fatal: agent may not be available in some runtimes
+            pass
+
+        # Persist confirmed anomaly to DB for history if user confirmed
+        if feedback == 'confirm':
+            try:
+                from services.anomaly_store import save_confirmed_detection
+                record = det.to_dict()
+                # include detection_id (to_dict intentionally omits the id for compactness)
+                record['detection_id'] = det.detection_id
+                # attach user/comment fields
+                record['user'] = user
+                record['comment'] = comment
+                # save
+                save_confirmed_detection(record)
+            except Exception:
+                pass
+
+        # If user declines or marks as not_anomaly, remove from active history so UI won't show it
+        if feedback in ('decline', 'not_anomaly'):
+            try:
+                # remove the detection from history
+                self.detection_history.pop(found_index)
+            except Exception:
+                pass
+
+        return True
+
+    def decline_all(self, detection_ids: Optional[List[str]] = None, comment: Optional[str] = None, user: Optional[str] = None) -> int:
+        """
+        Mark multiple detections as declined by user feedback.
+
+        If detection_ids is None, mark all current detections.
+        Returns number of detections updated.
+        """
+        updated = 0
+        targets = set(detection_ids) if detection_ids else None
+        # Build new list excluding targets (we'll remove them)
+        original_history = list(self.detection_history)
+        new_history = []
+        for det in self.detection_history:
+            match = (targets is None) or (det.detection_id in targets)
+            if match:
+                # mark feedback and log experience
+                det.user_feedback = {
+                    'feedback': 'decline',
+                    'comment': comment,
+                    'user': user,
+                    'timestamp': datetime.now().isoformat()
+                }
+                updated += 1
+                try:
+                    from services.rl_agent import get_agent
+                    agent = get_agent()
+                    if agent:
+                        severity_map = {'CRITICAL': 3, 'HIGH': 2, 'MEDIUM': 1, 'LOW': 0}
+                        features = {
+                            'fusion_score': float(det.fusion_score or 0.0),
+                            'ml_score': float(det.ml_score or 0.0),
+                            'object_score': float(det.object_score or 0.0),
+                            'pose_score': float(det.pose_score or 0.0),
+                            'motion_score': float(det.motion_score or 0.0),
+                            'consensus_count': float(det.consensus_count or 0),
+                            'confidence': float(det.confidence or 0.0),
+                            'severity': float(severity_map.get(det.severity.value if det.severity else 'LOW', 0))
+                        }
+                        agent.log_experience(features, action=1, reward=-1.0, meta={'detection_id': det.detection_id})
+                except Exception:
+                    pass
+                # do not keep this detection in new history
+            else:
+                new_history.append(det)
+
+        # Update history
+        self.detection_history = new_history
+
+        # If detection_ids is None (bulk decline), gather the removed ids from the original history
+        # and add them to suppressed_ids so they won't reappear. If specific targets provided,
+        # add those to suppressed_ids as well.
+        try:
+            if detection_ids is None:
+                removed_ids = {d.detection_id for d in original_history if d not in new_history}
+                self.suppressed_ids.update(removed_ids)
+            elif targets:
+                self.suppressed_ids.update(targets)
+        except Exception:
+            pass
+        return updated
+
+    def clear_decline_all_suppression(self):
+        """Clear any global decline-all suppression and per-id suppression."""
+        self.decline_all_active = False
+        try:
+            self.suppressed_ids.clear()
+        except Exception:
+            pass
 
     def get_detection_history(self, limit: int = 50) -> List[FusedDetection]:
         """Return recent FusedDetection objects (for internal formatting).

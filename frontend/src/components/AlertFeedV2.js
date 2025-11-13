@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 
 const getSeverityColor = (severity) => {
   const colors = {
@@ -30,7 +30,17 @@ const getSeverityColor = (severity) => {
   return colors[severity] || colors.LOW;
 };
 
-export default function AlertFeedV2({ alerts = [] }) {
+export default function AlertFeedV2({ alerts = [], onAlertsChange }) {
+  const [localAlerts, setLocalAlerts] = useState(alerts || []);
+  const [activeCount, setActiveCount] = useState((alerts || []).length);
+  const [recentCount, setRecentCount] = useState(Math.min(10, (alerts || []).length));
+  const [confirmedTotal, setConfirmedTotal] = useState(0);
+
+  useEffect(() => {
+    setLocalAlerts(alerts || []);
+    setActiveCount((alerts || []).length);
+    setRecentCount(Math.min(10, (alerts || []).length));
+  }, [alerts]);
   const formatTimestamp = (timestamp) => {
     const date = new Date(timestamp);
     const now = new Date();
@@ -40,6 +50,171 @@ export default function AlertFeedV2({ alerts = [] }) {
     if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
     if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
     return date.toLocaleString();
+  };
+
+  // API base for feedback endpoints (override with REACT_APP_API_BASE)
+  const apiBase = process.env.REACT_APP_API_BASE || "http://localhost:8000";
+
+  const resolveDetectionId = (alertObj) => {
+    // Prefer server-provided detection ids embedded in metadata/fusion
+    if (alertObj && alertObj.metadata && alertObj.metadata.detection_id) {
+      return alertObj.metadata.detection_id;
+    }
+
+    if (alertObj && alertObj.detection_id) return alertObj.detection_id;
+
+    if (alertObj && alertObj.meta && alertObj.meta.data && alertObj.meta.data.fusion && alertObj.meta.data.fusion.metadata && alertObj.meta.data.fusion.metadata.detection_id) {
+      return alertObj.meta.data.fusion.metadata.detection_id;
+    }
+
+    if (alertObj && alertObj.fusion && alertObj.fusion.metadata && alertObj.fusion.metadata.detection_id) {
+      return alertObj.fusion.metadata.detection_id;
+    }
+
+    // Fallback to frontend-generated id (may not map to backend)
+    return alertObj.id || null;
+  };
+
+  const sendFeedback = async (alertObj, feedback, comment) => {
+  let id = resolveDetectionId(alertObj);
+    if (!id) {
+      window.alert("Cannot determine detection id for this alert.");
+      return;
+    }
+
+    const confirmMsg = `Are you sure you want to mark this alert as "${feedback}"? This action will be recorded.`;
+    if (!window.confirm(confirmMsg)) return;
+
+    // helper to POST feedback for a given id
+    const trySend = async (idToSend) => {
+      const res = await fetch(`${apiBase}/api/detections/${encodeURIComponent(idToSend)}/feedback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ feedback, comment: comment || "", user: "operator" }),
+      });
+      return res;
+    };
+
+    try {
+      let res = await trySend(id);
+
+      // If detection id not found on server, try normalized variants (hyphen/underscore mismatch)
+      if (!res.ok && res.status === 404) {
+        const alt1 = id.includes("-") ? id.replace(/-/g, "_") : null;
+        const alt2 = id.includes("_") ? id.replace(/_/g, "-") : null;
+        const tried = new Set([id]);
+        if (alt1) tried.add(alt1);
+        if (alt2) tried.add(alt2);
+
+        // Attempt alternate forms until one succeeds
+        for (const alt of [alt1, alt2]) {
+          if (!alt || tried.has(alt)) continue;
+          try {
+            res = await trySend(alt);
+            if (res.ok) {
+              // use the canonical id that worked for local state updates
+              id = alt; // eslint-disable-line no-param-reassign
+              break;
+            }
+          } catch (e) {
+            // ignore and continue
+          }
+        }
+      }
+
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(txt || "Failed to send feedback");
+      }
+
+      // Update local state to reflect feedback without full reload
+      const idToMatch = id;
+      // Parse server response for counts/orphan flag
+      let respJson = {};
+      try {
+        respJson = await res.json();
+      } catch (e) {
+        // ignore
+      }
+
+      // If server indicated orphan (not matched), notify operator but still remove locally
+      if (respJson.orphan) {
+        console.warn('Feedback accepted as orphan (detection id not found on server).');
+      }
+
+      // Remove the alert from the local list
+      setLocalAlerts((prev) => {
+        const next = prev.filter((a) => resolveDetectionId(a) !== idToMatch);
+        // update derived counts
+        setActiveCount(next.length);
+        setRecentCount(Math.min(10, next.length));
+        
+        // Notify parent to sync its state if callback provided
+        if (onAlertsChange) {
+          onAlertsChange(next);
+        }
+        
+        return next;
+      });
+
+      // If server provided authoritative counts, prefer those
+      if (respJson && typeof respJson.active_notifications === 'number') {
+        setActiveCount(respJson.active_notifications);
+        setRecentCount(Math.min(10, respJson.active_notifications));
+      }
+      if (respJson && typeof respJson.confirmed_total === 'number') {
+        setConfirmedTotal(respJson.confirmed_total);
+      }
+    } catch (e) {
+      console.error(e);
+      window.alert("Failed to send feedback: " + e.message);
+    }
+  };
+
+  const declineAll = async () => {
+    const msg = "Are you sure you want to DECLINE ALL alerts shown? This will mark them as declined on the server.";
+    if (!window.confirm(msg)) return;
+
+    try {
+      const res = await fetch(`${apiBase}/api/detections/decline-all`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: true, comment: "Bulk decline from UI", user: "operator" }),
+      });
+
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(txt || "Failed to decline all");
+      }
+
+      // Prefer authoritative counts from server response
+      let rj = {};
+      try {
+        rj = await res.json();
+      } catch (e) {
+        // ignore
+      }
+
+      // Clear local alerts and update counts
+      setLocalAlerts([]);
+      
+      // Notify parent to clear its alerts state too
+      if (onAlertsChange) {
+        onAlertsChange([]);
+      }
+      
+      if (rj && typeof rj.active_notifications === 'number') {
+        setActiveCount(rj.active_notifications);
+        setRecentCount(Math.min(10, rj.active_notifications));
+      } else {
+        setActiveCount(0);
+        setRecentCount(0);
+      }
+      if (rj && typeof rj.confirmed_total === 'number') setConfirmedTotal(rj.confirmed_total);
+    } catch (e) {
+      console.error(e);
+      window.alert("Failed to decline all: " + e.message);
+    }
   };
 
   // ⭐ Filter dangerous objects - User Requirement #5 ⭐
@@ -75,7 +250,7 @@ export default function AlertFeedV2({ alerts = [] }) {
     return [...dangerous, ...others].slice(0, 5);
   };
 
-  if (!alerts.length) {
+  if (!localAlerts.length) {
     return (
       <div className="bg-slate-900/50 backdrop-blur-sm rounded-lg sm:rounded-xl border border-slate-800 shadow-xl">
         <div className="px-3 sm:px-4 md:px-6 py-3 sm:py-4 border-b border-slate-800">
@@ -113,9 +288,9 @@ export default function AlertFeedV2({ alerts = [] }) {
     );
   }
 
-  const recentAlerts = alerts.slice(0, 10);
-  const criticalCount = alerts.filter((a) => a.severity === "CRITICAL").length;
-  const highCount = alerts.filter((a) => a.severity === "HIGH").length;
+  const recentAlerts = localAlerts.slice(0, 10);
+  const criticalCount = localAlerts.filter((a) => a.severity === "CRITICAL").length;
+  const highCount = localAlerts.filter((a) => a.severity === "HIGH").length;
 
   return (
     <div className="bg-slate-900/50 backdrop-blur-sm rounded-lg sm:rounded-xl border border-slate-800 shadow-xl">
@@ -136,12 +311,19 @@ export default function AlertFeedV2({ alerts = [] }) {
                 ⚠️ {highCount}
               </span>
             )}
+            <button
+              onClick={declineAll}
+              className="ml-2 text-red-400 hover:text-red-300 text-xs sm:text-sm font-semibold"
+              title="Decline all visible alerts"
+            >
+              Decline All
+            </button>
           </div>
         </div>
-        <div className="flex items-center gap-2 sm:gap-4 text-[10px] sm:text-xs text-slate-400">
-          <span>Total: {alerts.length}</span>
+          <div className="flex items-center gap-2 sm:gap-4 text-[10px] sm:text-xs text-slate-400">
+          <span>Total: {activeCount}</span>
           <span>•</span>
-          <span>Recent: {Math.min(10, alerts.length)}</span>
+          <span>Recent: {recentCount}</span>
         </div>
       </div>
 
@@ -292,6 +474,28 @@ export default function AlertFeedV2({ alerts = [] }) {
                     </div>
                   </div>
                 )}
+
+                {/* Feedback actions */}
+                <div className="mt-3 flex items-center gap-2">
+                  <button
+                    onClick={() => sendFeedback(alert, "confirm")}
+                    className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-semibold"
+                  >
+                    Confirm
+                  </button>
+                  <button
+                    onClick={() => sendFeedback(alert, "not_anomaly")}
+                    className="px-2 py-1 bg-yellow-600 hover:bg-yellow-500 text-white rounded text-xs font-semibold"
+                  >
+                    Not Anomaly
+                  </button>
+                  <button
+                    onClick={() => sendFeedback(alert, "decline")}
+                    className="px-2 py-1 bg-red-600 hover:bg-red-500 text-white rounded text-xs font-semibold"
+                  >
+                    Decline
+                  </button>
+                </div>
               </div>
             );
           })}
