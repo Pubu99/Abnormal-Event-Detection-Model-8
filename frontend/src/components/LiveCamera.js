@@ -1,7 +1,14 @@
 import React, { useState, useRef, useEffect } from "react";
 import "./LiveCamera.css"; // Professional animations and styles
 
-function LiveCamera({ onDetection, onAnomaly, onFrame }) {
+function LiveCamera({
+  onDetection,
+  onAnomaly,
+  onFrame,
+  autoResumeOnClose = true,
+  resumeDelayMs = 3000,
+  maxAutoResumeAttempts = 5,
+}) {
   const [isStreaming, setIsStreaming] = useState(false);
   const [cameraActive, setCameraActive] = useState(false);
   const [currentResult, setCurrentResult] = useState(null);
@@ -31,6 +38,9 @@ function LiveCamera({ onDetection, onAnomaly, onFrame }) {
   const intervalRef = useRef(null);
   const fpsIntervalRef = useRef(null);
   const frameCountRef = useRef(0);
+  const manualStopRef = useRef(false);
+  const autoResumeAttemptsRef = useRef(0);
+  const autoResumeTimerRef = useRef(null);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -44,6 +54,10 @@ function LiveCamera({ onDetection, onAnomaly, onFrame }) {
       }
       if (fpsIntervalRef.current) {
         clearInterval(fpsIntervalRef.current);
+      }
+      if (autoResumeTimerRef.current) {
+        clearTimeout(autoResumeTimerRef.current);
+        autoResumeTimerRef.current = null;
       }
     };
   }, []);
@@ -203,6 +217,15 @@ function LiveCamera({ onDetection, onAnomaly, onFrame }) {
       return;
     }
 
+    // Clear manual stop flag (we are intentionally starting)
+    manualStopRef.current = false;
+    // reset attempts
+    autoResumeAttemptsRef.current = 0;
+    if (autoResumeTimerRef.current) {
+      clearTimeout(autoResumeTimerRef.current);
+      autoResumeTimerRef.current = null;
+    }
+
     console.log("🚀 Starting live analysis...");
     console.log("📡 Connecting to WebSocket: ws://localhost:8000/ws/stream");
     setStatusMessage("Connecting to analysis server...");
@@ -215,6 +238,13 @@ function LiveCamera({ onDetection, onAnomaly, onFrame }) {
       console.log("✅ WebSocket connected successfully!");
       setStatusMessage("");
       setIsStreaming(true);
+
+      // reset auto-resume attempts on successful connect
+      autoResumeAttemptsRef.current = 0;
+      if (autoResumeTimerRef.current) {
+        clearTimeout(autoResumeTimerRef.current);
+        autoResumeTimerRef.current = null;
+      }
 
       // Start FPS counter
       frameCountRef.current = 0;
@@ -273,7 +303,31 @@ function LiveCamera({ onDetection, onAnomaly, onFrame }) {
         fpsIntervalRef.current = null;
       }
 
-      if (!event.wasClean) {
+      // If the disconnect was not manual and auto-resume is enabled, try to reconnect
+      if (!manualStopRef.current && autoResumeOnClose) {
+        const attempts = autoResumeAttemptsRef.current || 0;
+        if (attempts < maxAutoResumeAttempts) {
+          const delay = resumeDelayMs * Math.pow(2, attempts); // exponential backoff
+          console.warn(
+            `🔁 Attempting auto-resume in ${delay}ms (attempt ${attempts + 1}/${maxAutoResumeAttempts})`
+          );
+          autoResumeTimerRef.current = setTimeout(() => {
+            autoResumeAttemptsRef.current = attempts + 1;
+            // ensure camera still active before resuming
+            if (cameraActive) {
+              console.log("🔁 Auto-resume: restarting analysis...");
+              startAnalysis();
+            } else {
+              console.log("⏸️ Auto-resume aborted: camera not active");
+            }
+          }, delay);
+        } else {
+          console.error(
+            "❌ Auto-resume max attempts reached — manual intervention required"
+          );
+          setStatusMessage("Connection lost - Please restart analysis");
+        }
+      } else if (!event.wasClean) {
         setStatusMessage("Connection lost - Try reconnecting");
       }
     };
@@ -281,6 +335,9 @@ function LiveCamera({ onDetection, onAnomaly, onFrame }) {
 
   const stopAnalysis = () => {
     console.log("⏸️ Stopping analysis...");
+
+    // mark manual stop so auto-resume won't immediately restart
+    manualStopRef.current = true;
 
     if (wsRef.current) {
       wsRef.current.close();

@@ -1,15 +1,26 @@
 import React, { useState, useEffect, useRef } from "react";
 
 export default function LiveCameraV2({
+  camera, // Camera configuration object
   onAnomaly,
   onStreamReady, // NEW: Pass stream to parent
   onDetectionData, // NEW: Pass detection data to parent
   onNormalFrame,
+  autoResumeOnClose = true,
+  resumeDelayMs = 3000,
+  maxAutoResumeAttempts = 5,
 }) {
   const [isConnected, setIsConnected] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [status, setStatus] = useState("Disconnected");
   const [fps, setFps] = useState(0);
+
+  // Get camera info
+  const cameraId = camera?.id || "cam-001";
+  const cameraName = camera?.name || "Camera";
+  const cameraType = camera?.type || "webcam";
+  const isWebcam = cameraType === "webcam";
+  const isIPCamera = cameraType === "ip_camera";
 
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -17,10 +28,17 @@ export default function LiveCameraV2({
   const streamRef = useRef(null);
   const intervalRef = useRef(null);
   const fpsCounterRef = useRef({ count: 0, lastTime: Date.now() });
+  const manualStopRef = useRef(false);
+  const autoResumeAttemptsRef = useRef(0);
+  const autoResumeTimerRef = useRef(null);
 
   useEffect(() => {
     return () => {
       stopCamera();
+      if (autoResumeTimerRef.current) {
+        clearTimeout(autoResumeTimerRef.current);
+        autoResumeTimerRef.current = null;
+      }
     };
   }, []);
 
@@ -28,95 +46,105 @@ export default function LiveCameraV2({
     try {
       setStatus("Requesting camera access...");
 
-      const constraints = {
-        video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          facingMode: "user",
-        },
-      };
+      // For webcam, use getUserMedia
+      if (isWebcam) {
+        const constraints = {
+          video: {
+            width: { ideal: camera?.resolution_width || 1280 },
+            height: { ideal: camera?.resolution_height || 720 },
+            facingMode: "user",
+          },
+        };
 
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      streamRef.current = stream;
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        streamRef.current = stream;
 
-      if (videoRef.current) {
-        const video = videoRef.current;
+        if (videoRef.current) {
+          const video = videoRef.current;
 
-        // Set up event handlers BEFORE assigning srcObject
-        const waitForVideo = new Promise((resolve) => {
-          let resolved = false;
+          // Set up event handlers BEFORE assigning srcObject
+          const waitForVideo = new Promise((resolve) => {
+            let resolved = false;
 
-          const checkAndResolve = () => {
-            if (
-              !resolved &&
-              video.videoWidth > 0 &&
-              video.videoHeight > 0 &&
-              video.readyState >= 2
-            ) {
-              resolved = true;
-              resolve();
-            }
-          };
+            const checkAndResolve = () => {
+              if (
+                !resolved &&
+                video.videoWidth > 0 &&
+                video.videoHeight > 0 &&
+                video.readyState >= 2
+              ) {
+                resolved = true;
+                resolve();
+              }
+            };
 
-          video.onloadedmetadata = async () => {
-            try {
-              await video.play();
-            } catch (err) {
-              console.error("Play error:", err);
-            }
-            checkAndResolve();
-          };
+            video.onloadedmetadata = async () => {
+              try {
+                await video.play();
+              } catch (err) {
+                console.error("Play error:", err);
+              }
+              checkAndResolve();
+            };
 
-          video.onloadeddata = () => {
-            checkAndResolve();
-          };
+            video.onloadeddata = () => {
+              checkAndResolve();
+            };
 
-          video.oncanplay = () => {
-            checkAndResolve();
-          };
+            video.oncanplay = () => {
+              checkAndResolve();
+            };
 
-          video.onplaying = () => {
-            checkAndResolve();
-          };
+            video.onplaying = () => {
+              checkAndResolve();
+            };
 
-          // Timeout fallback
-          setTimeout(() => {
-            if (!resolved) {
-              resolved = true;
-              resolve();
-            }
-          }, 3000);
-        });
+            // Timeout fallback
+            setTimeout(() => {
+              if (!resolved) {
+                resolved = true;
+                resolve();
+              }
+            }, 3000);
+          });
 
-        // Assign srcObject after handlers are set
-        video.srcObject = stream;
+          // Assign srcObject after handlers are set
+          video.srcObject = stream;
 
-        // Try to load and play explicitly
-        video.load();
-        try {
-          await video.play();
-        } catch (err) {
-          // Will retry via event handlers
+          // Try to load and play explicitly
+          video.load();
+          try {
+            await video.play();
+          } catch (err) {
+            // Will retry via event handlers
+          }
+
+          // Wait for video to be ready
+          await waitForVideo;
+
+          // Additional stabilization time
+          await new Promise((resolve) => setTimeout(resolve, 500));
         }
 
-        // Wait for video to be ready
-        await waitForVideo;
+        setIsConnected(true);
+        setStatus("Camera active");
 
-        // Additional stabilization time
-        await new Promise((resolve) => setTimeout(resolve, 500));
-      }
-
-      setIsConnected(true);
-      setStatus("Camera active");
-
-      // ⭐ PROFESSIONAL: Pass stream to parent for direct display
-      if (onStreamReady) {
-        onStreamReady(stream);
+        // ⭐ PROFESSIONAL: Pass stream to parent for direct display
+        if (onStreamReady) {
+          onStreamReady(stream);
+        }
+      } 
+      // For IP camera, no need to start camera (backend handles it)
+      else if (isIPCamera) {
+        setIsConnected(true);
+        setStatus("IP Camera ready - Start analysis to connect");
       }
     } catch (error) {
       console.error("Camera error:", error);
       setStatus(`Camera error: ${error.message}`);
-      alert("Failed to access camera. Please check permissions.");
+      if (isWebcam) {
+        alert("Failed to access camera. Please check permissions.");
+      }
     }
   };
 
@@ -126,7 +154,7 @@ export default function LiveCameraV2({
       streamRef.current = null;
     }
 
-    if (videoRef.current) {
+    if (videoRef.current && isWebcam) {
       videoRef.current.srcObject = null;
     }
 
@@ -152,20 +180,47 @@ export default function LiveCameraV2({
       return;
     }
 
+    // Clear manual stop flag (we are intentionally starting)
+    manualStopRef.current = false;
+    // reset attempts
+    autoResumeAttemptsRef.current = 0;
+    if (autoResumeTimerRef.current) {
+      clearTimeout(autoResumeTimerRef.current);
+      autoResumeTimerRef.current = null;
+    }
+
     try {
       setStatus("Connecting to analysis server...");
 
-      const ws = new WebSocket("ws://localhost:8000/ws/stream");
+      // Connect to camera-specific WebSocket endpoint
+      const ws = new WebSocket(`ws://localhost:8000/ws/stream/${cameraId}`);
       wsRef.current = ws;
 
       ws.onopen = () => {
         setStatus("Analyzing...");
         setIsAnalyzing(true);
 
-        // ⭐ PROFESSIONAL: Send frames for analysis at 15 FPS
-        intervalRef.current = setInterval(() => {
-          sendFrame();
-        }, 67); // ~15 FPS
+        // reset auto-resume attempts on successful connect
+        autoResumeAttemptsRef.current = 0;
+        if (autoResumeTimerRef.current) {
+          clearTimeout(autoResumeTimerRef.current);
+          autoResumeTimerRef.current = null;
+        }
+
+        // ⭐ For webcam: Send frames at configured FPS
+        // ⭐ For IP camera: Backend pulls frames, no need to send
+        if (isWebcam) {
+          const targetFps = camera?.fps || 15;
+          const frameInterval = 1000 / targetFps; // ms per frame
+          
+          intervalRef.current = setInterval(() => {
+            sendFrame();
+          }, frameInterval);
+        } else {
+          // For IP cameras, we don't send frames
+          // Backend pulls from RTSP and sends detection results
+          console.log(`🎥 IP Camera ${cameraId}: Backend handling frame capture`);
+        }
       };
 
       ws.onmessage = (event) => {
@@ -185,6 +240,8 @@ export default function LiveCameraV2({
             // ⭐ PROFESSIONAL: Only send detection data, not frame
             if (onDetectionData) {
               onDetectionData({
+                camera_id: data.camera_id,
+                camera_name: data.camera_name,
                 objects: data.data.objects || [],
                 poses: data.data.poses || [],
                 motion: data.data.motion || null,
@@ -197,7 +254,9 @@ export default function LiveCameraV2({
               onAnomaly(data.data.fusion, data);
 
               // ⭐ CAPTURE SCREENSHOT only on anomaly
-              captureAnomalyScreenshot(data);
+              if (isWebcam) {
+                captureAnomalyScreenshot(data);
+              }
             } else {
               onNormalFrame();
             }
@@ -212,12 +271,35 @@ export default function LiveCameraV2({
         setStatus("Connection error");
       };
 
-      ws.onclose = () => {
+      ws.onclose = (event) => {
+        console.log("🔌 WebSocket closed:", event);
         setStatus("Analysis stopped");
         setIsAnalyzing(false);
         if (intervalRef.current) {
           clearInterval(intervalRef.current);
           intervalRef.current = null;
+        }
+
+        // Auto-resume if appropriate
+        if (!manualStopRef.current && autoResumeOnClose) {
+          const attempts = autoResumeAttemptsRef.current || 0;
+          if (attempts < maxAutoResumeAttempts) {
+            const delay = resumeDelayMs * Math.pow(2, attempts);
+            console.warn(
+              `🔁 LiveCameraV2 auto-resume in ${delay}ms (attempt ${attempts + 1}/${maxAutoResumeAttempts})`
+            );
+            autoResumeTimerRef.current = setTimeout(() => {
+              autoResumeAttemptsRef.current = attempts + 1;
+              if (isConnected) {
+                console.log("🔁 LiveCameraV2 auto-resume: restarting analysis...");
+                startAnalysis();
+              } else {
+                console.log("⏸️ LiveCameraV2 auto-resume aborted: camera disconnected");
+              }
+            }, delay);
+          } else {
+            console.error("❌ LiveCameraV2 auto-resume max attempts reached");
+          }
         }
       };
     } catch (error) {
@@ -227,6 +309,9 @@ export default function LiveCameraV2({
   };
 
   const stopAnalysis = () => {
+    // mark manual stop so auto-resume won't restart
+    manualStopRef.current = true;
+
     if (wsRef.current) {
       wsRef.current.close();
       wsRef.current = null;
@@ -235,6 +320,11 @@ export default function LiveCameraV2({
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
       intervalRef.current = null;
+    }
+
+    if (autoResumeTimerRef.current) {
+      clearTimeout(autoResumeTimerRef.current);
+      autoResumeTimerRef.current = null;
     }
 
     setIsAnalyzing(false);
@@ -362,7 +452,15 @@ export default function LiveCameraV2({
       {/* Header */}
       <div className="px-6 py-4 border-b border-slate-800">
         <div className="flex items-center justify-between">
-          <h3 className="text-white font-bold text-lg">CAMERA CONTROLS</h3>
+          <div>
+            <h3 className="text-white font-bold text-lg flex items-center gap-2">
+              {isWebcam ? "💻" : "📹"} {cameraName}
+              <span className="text-slate-400 text-sm font-normal">({cameraId})</span>
+            </h3>
+            <p className="text-slate-500 text-xs mt-1">
+              {isWebcam ? "Webcam Camera" : "IP Camera (RTSP)"} • {camera?.location || "No location"}
+            </p>
+          </div>
           <div className="flex items-center gap-2">
             <div
               className={`w-2 h-2 rounded-full ${
@@ -506,20 +604,22 @@ export default function LiveCameraV2({
         {/* Camera Feed - Always render for ref, show when connected */}
         <div className={`mt-4 ${isConnected ? "" : "hidden"}`}>
           <div className="relative bg-black rounded-lg overflow-hidden shadow-2xl border-2 border-slate-700">
-            {/* Hidden video element - only for frame capture */}
-            <video
-              ref={videoRef}
-              className="hidden"
-              autoPlay
-              playsInline
-              muted
-            />
+            {/* Hidden video element - only for webcam frame capture */}
+            {isWebcam && (
+              <video
+                ref={videoRef}
+                className="hidden"
+                autoPlay
+                playsInline
+                muted
+              />
+            )}
             {!isAnalyzing && isConnected && (
               <div className="bg-green-600/20 border border-green-600/30 rounded-lg p-4">
                 <div className="flex items-center justify-center gap-3">
                   <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
                   <span className="text-green-400 font-semibold">
-                    ✓ Camera Connected - Click "Start Analysis" to begin
+                    ✓ {cameraName} Connected - Click "Start Analysis" to begin
                   </span>
                 </div>
               </div>
@@ -529,7 +629,7 @@ export default function LiveCameraV2({
                 <div className="flex items-center justify-center gap-3">
                   <div className="w-3 h-3 bg-blue-500 rounded-full animate-pulse"></div>
                   <span className="text-blue-400 font-semibold">
-                    🔴 Analysis in progress - Watch the live feed above
+                    🔴 Analyzing {cameraName} - Watch the live feed above
                   </span>
                 </div>
               </div>
