@@ -1,9 +1,48 @@
-import React from "react";
 import "./App.css";
 import "./styles/professional.css";
 import ProfessionalDashboardV2 from "./components/ProfessionalDashboardV2";
+import FeedbackWidget from "./components/FeedbackWidget";
+import axios from "axios";
+import React, { useEffect, useState } from "react";
 
 function App() {
+ const [detections, setDetections] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [selectedDetection, setSelectedDetection] = useState(null);
+  const apiBase = ""; // leave empty for same origin, or "http://localhost:8000" if backend runs on 8000
+
+  useEffect(() => {
+    const fetchDetections = async () => {
+      try {
+        setLoading(true);
+        const res = await axios.get(`${apiBase}/api/feedbacks?limit=50`); // or '/api/detections'
+        // DEBUG: inspect raw response
+        console.log("API /feedbacks response:", res);
+        // if your endpoint returns data in res.data, set accordingly:
+        const data = res.data;
+        // If your backend returns an object like { items: [...] } adjust accordingly.
+        // Eg: const items = data.items || data;
+        const items = Array.isArray(data) ? data : data.items || data.rows || [];
+        console.log("Parsed items[0]:", items[0]);
+        setDetections(items);
+        if (items.length > 0) setSelectedDetection(items[0]);
+      } catch (err) {
+        console.error("Failed to fetch detections:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchDetections();
+  }, []);
+
+  // Helper to derive label/confidence robustly from various server shapes
+  const getLabel = d =>
+    d?.detection_label ?? d?.label ?? d?.prediction ?? d?.predicted_label ?? "Unknown";
+  const getConfidence = d =>
+    (typeof d?.detection_confidence === "number" && d.detection_confidence) ??
+    d?.confidence ??
+    d?.score ??
+    null;
   return (
     <div className="min-h-screen bg-slate-950">
       {/* Professional Header */}
@@ -51,8 +90,40 @@ function App() {
           </div>
         </div>
       </header>
+<div className="col-span-2">
+          <div className="p-4 rounded border border-slate-700 bg-slate-900/40">
+            <h3 className="text-white text-md mb-2">Selected Detection</h3>
+            {!selectedDetection && <div className="text-slate-400">Click a detection to view details</div>}
 
-      {/* Main Dashboard */}
+            {selectedDetection && (
+              <div>
+                <div className="mb-3">
+                  <strong className="text-slate-200">Label:</strong>{" "}
+                  <span className="text-slate-300">{getLabel(selectedDetection)}</span>
+                </div>
+                <div className="mb-3">
+                  <strong className="text-slate-200">Confidence:</strong>{" "}
+                  <span className="text-slate-300">
+                    {getConfidence(selectedDetection) ? `${(getConfidence(selectedDetection) * 100).toFixed(0)}%` : "N/A"}
+                  </span>
+                </div>
+                <div className="mb-3">
+                  <strong className="text-slate-200">Camera:</strong>{" "}
+                  <span className="text-slate-300">{selectedDetection.camera_id ?? selectedDetection.camera ?? "-"}</span>
+                </div>
+
+                {/* pass full detection object into FeedbackWidget */}
+                <FeedbackWidget detection={{
+                  id: selectedDetection.id,
+                  detection_label: getLabel(selectedDetection),
+                  detection_confidence: getConfidence(selectedDetection),
+                  // include any other fields the widget may need, e.g. frame_path
+                  frame_path: selectedDetection.frame_path ?? selectedDetection.frame_url ?? null
+                }} />
+              </div>
+            )}
+          </div>
+       </div>      {/* Main Dashboard */}
       <main>
         <ProfessionalDashboardV2 />
       </main>
