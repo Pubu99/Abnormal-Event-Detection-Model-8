@@ -13,6 +13,7 @@ Date: 2025-10-17
 import cv2
 import numpy as np
 from typing import Dict, List, Tuple, Optional
+from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import datetime
 import math
@@ -85,6 +86,19 @@ class PoseEstimator:
         # Pose history for temporal analysis
         self.pose_history = []
         self.history_size = 30  # 1 second at 30fps
+        # Previous raw keypoints for simple exponential smoothing
+        self._prev_keypoints = None
+        self._smoothing_alpha = 0.45
+
+        # Counters for persistence-based heuristics
+        self._anomaly_counters = {}
+        self._persistence_threshold = 3  # frames
+        # Directory for saving sample frames for auditing
+        self._sample_dir = Path(__file__).parent.parent / 'data' / 'fall_samples'
+        try:
+            self._sample_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
     
     def _lazy_init(self):
         """Initialize MediaPipe only when first needed"""
@@ -119,7 +133,7 @@ class PoseEstimator:
             self._initialized = True
         
         
-    def analyze(self, frame: np.ndarray) -> PoseResult:
+    def analyze(self, frame: np.ndarray, camera_id: Optional[str] = None) -> PoseResult:
         """
         Analyze poses in the frame
         
@@ -159,7 +173,9 @@ class PoseEstimator:
                     keypoints = [(kp[0] / max(w,1e-6), kp[1] / max(h,1e-6), kp[2]) for kp in person]
                     keypoints_list.append(keypoints)
                     try:
-                        pose_data = self._extract_pose_features(keypoints, frame.shape)
+                        # Apply light smoothing to keypoints before feature extraction
+                        sk = self._smooth_keypoints(keypoints)
+                        pose_data = self._extract_pose_features(sk, frame.shape)
                         poses.append(pose_data)
                     except Exception as e:
                         # Skip feature extraction errors for robustness
@@ -178,18 +194,23 @@ class PoseEstimator:
                 ]
                 keypoints_list.append(keypoints)
                 try:
-                    pose_data = self._extract_pose_features(keypoints, frame.shape)
+                    sk = self._smooth_keypoints(keypoints)
+                    pose_data = self._extract_pose_features(sk, frame.shape)
                     poses.append(pose_data)
                 except Exception as e:
                     print(f"⚠️ Pose feature extraction failed (MediaPipe): {e}")
         
-        # Update history
-        self.pose_history.append(poses)
+        # Update history (store flattened per-frame pose features)
+        # Keep only first person's pose for temporal analysis (simpler for now)
+        frame_pose = poses[0] if poses else None
+        self.pose_history.append(frame_pose)
         if len(self.pose_history) > self.history_size:
             self.pose_history.pop(0)
+        # Store last frame for possible sample saving
+        self._last_frame_for_sample = frame.copy()
         
         # Detect anomalies
-        is_anomalous, anomaly_type, confidence = self._detect_pose_anomaly(poses)
+        is_anomalous, anomaly_type, confidence = self._detect_pose_anomaly(poses, camera_id=camera_id)
         
         return PoseResult(
             persons_detected=len(poses),
@@ -200,6 +221,22 @@ class PoseEstimator:
             timestamp=datetime.now().isoformat(),
             keypoints=keypoints_list
         )
+
+    def _smooth_keypoints(self, keypoints: List[Tuple[float,float,float]]) -> List[Tuple[float,float,float]]:
+        """Apply a simple exponential smoothing to keypoints to reduce jitter."""
+        if self._prev_keypoints is None:
+            self._prev_keypoints = keypoints
+            return keypoints
+
+        alpha = self._smoothing_alpha
+        sk = []
+        for prev, cur in zip(self._prev_keypoints, keypoints):
+            sx = alpha * cur[0] + (1 - alpha) * prev[0]
+            sy = alpha * cur[1] + (1 - alpha) * prev[1]
+            sc = alpha * cur[2] + (1 - alpha) * prev[2]
+            sk.append((sx, sy, sc))
+        self._prev_keypoints = sk
+        return sk
     
     def _extract_pose_features(self, keypoints: List, frame_shape: Tuple) -> Dict:
         """Extract meaningful features from pose keypoints"""
@@ -309,7 +346,7 @@ class PoseEstimator:
         
         return angle
     
-    def _detect_pose_anomaly(self, poses: List[Dict]) -> Tuple[bool, Optional[str], float]:
+    def _detect_pose_anomaly(self, poses: List[Dict], camera_id: Optional[str] = None) -> Tuple[bool, Optional[str], float]:
         """
         Detect anomalous poses
         
@@ -318,11 +355,41 @@ class PoseEstimator:
         """
         if not poses:
             return False, None, 0.0
-        
+
+        # Load per-camera thresholds if camera_id provided
+        body_angle_thresh = 45.0
+        vel_thresh = 0.02
+        accel_thresh = 0.02
+        persistence = self._persistence_threshold
+        try:
+            if camera_id:
+                from services.camera_manager import get_camera_manager
+                cm = get_camera_manager()
+                cam = cm.get_camera(camera_id)
+                if cam:
+                    body_angle_thresh = float(getattr(cam, 'pose_body_angle_thresh', body_angle_thresh))
+                    vel_thresh = float(getattr(cam, 'pose_velocity_thresh', vel_thresh))
+                    accel_thresh = float(getattr(cam, 'pose_acceleration_thresh', accel_thresh))
+                    persistence = int(getattr(cam, 'pose_persistence_frames', persistence))
+        except Exception:
+            # best-effort: fall back to defaults if camera manager unavailable
+            pass
+
         for pose in poses:
             # 1. Falling detection (extreme body tilt)
-            if abs(pose['body_angle']) > 45:
-                return True, "PERSON_FALLING", 0.85
+            if abs(pose.get('body_angle', 0.0)) > body_angle_thresh:
+                key = f"PERSON_FALLING::{camera_id or 'global'}"
+                self._anomaly_counters[key] = self._anomaly_counters.get(key, 0) + 1
+                if self._anomaly_counters.get(key, 0) >= max(1, persistence):
+                    # reset other counters for this camera to avoid duplicate alerts
+                    # keep only this key
+                    keys_to_clear = [k for k in list(self._anomaly_counters.keys()) if k.endswith(f"::{camera_id}") and k != key]
+                    for k in keys_to_clear:
+                        self._anomaly_counters.pop(k, None)
+                    return True, "PERSON_FALLING", 0.85
+                else:
+                    # persistence not yet reached
+                    return False, None, 0.0
             
             # 2. Fighting detection (aggressive arm movements)
             if pose['left_elbow_angle'] < 90 and pose['right_elbow_angle'] < 90:
@@ -333,23 +400,48 @@ class PoseEstimator:
                         return True, "FIGHTING_DETECTED", 0.80
             
             # 3. Surrender/Distress pose (hands raised near head)
-            if pose['arms_raised'] and pose['hands_near_head']:
-                return True, "DISTRESS_POSE", 0.75
+            if pose.get('arms_raised') and pose.get('hands_near_head'):
+                key = f"DISTRESS_POSE::{camera_id or 'global'}"
+                self._anomaly_counters[key] = self._anomaly_counters.get(key, 0) + 1
+                if self._anomaly_counters.get(key, 0) >= max(1, persistence):
+                    return True, "DISTRESS_POSE", 0.75
+                else:
+                    return False, None, 0.0
             
             # 4. Weapon handling pose (one arm extended, rigid posture)
-            if (pose['left_elbow_angle'] > 160 or pose['right_elbow_angle'] > 160):
+            if (pose.get('left_elbow_angle', 0.0) > 160 or pose.get('right_elbow_angle', 0.0) > 160):
                 # Straight arm could indicate weapon
-                return True, "SUSPICIOUS_POSE", 0.65
+                key = f"SUSPICIOUS_POSE::{camera_id or 'global'}"
+                self._anomaly_counters[key] = self._anomaly_counters.get(key, 0) + 1
+                if self._anomaly_counters.get(key, 0) >= max(1, persistence):
+                    return True, "SUSPICIOUS_POSE", 0.65
+                else:
+                    return False, None, 0.0
         
         # 5. Multiple people with aggressive poses (group fighting)
         if len(poses) >= 2:
             aggressive_count = sum(
                 1 for p in poses 
-                if p['left_elbow_angle'] < 90 or p['right_elbow_angle'] < 90
+                if p.get('left_elbow_angle', 180) < 90 or p.get('right_elbow_angle', 180) < 90
             )
             if aggressive_count >= 2:
-                return True, "GROUP_ALTERCATION", 0.78
+                key = f"GROUP_ALTERCATION::{camera_id or 'global'}"
+                self._anomaly_counters[key] = self._anomaly_counters.get(key, 0) + 1
+                if self._anomaly_counters.get(key, 0) >= max(1, persistence):
+                    return True, "GROUP_ALTERCATION", 0.78
+                else:
+                    return False, None, 0.0
         
+        # If we got here, no persistent anomaly detected: decay counters for this camera
+        try:
+            if camera_id:
+                for k in list(self._anomaly_counters.keys()):
+                    if k.endswith(f"::{camera_id}"):
+                        # decay by 1 per non-event frame to avoid permanent lock
+                        self._anomaly_counters[k] = max(0, self._anomaly_counters[k] - 1)
+        except Exception:
+            pass
+
         return False, None, 0.0
     
     def _check_rapid_arm_movement(self) -> bool:

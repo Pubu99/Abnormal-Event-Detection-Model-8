@@ -1,7 +1,7 @@
 import React from "react";
 
-export default function SystemHealthMonitor({ stats }) {
-  const formatUptime = (seconds) => {
+export default function SystemHealthMonitor({ stats = {} }) {
+  const formatUptime = (seconds = 0) => {
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
     const secs = seconds % 60;
@@ -11,8 +11,9 @@ export default function SystemHealthMonitor({ stats }) {
   };
 
   const getStatusColor = () => {
-    if (stats.fps >= 15) return "text-emerald-400";
-    if (stats.fps >= 10) return "text-yellow-400";
+    const fps = stats.fps || stats.totalFPS || 0;
+    if (fps >= 15) return "text-emerald-400";
+    if (fps >= 10) return "text-yellow-400";
     return "text-red-400";
   };
 
@@ -31,7 +32,7 @@ export default function SystemHealthMonitor({ stats }) {
             <div className="text-slate-400 text-sm">
               Uptime:{" "}
               <span className="text-white font-mono">
-                {formatUptime(stats.uptime)}
+                {formatUptime(stats.uptime || 0)}
               </span>
             </div>
           </div>
@@ -41,25 +42,25 @@ export default function SystemHealthMonitor({ stats }) {
             <div className="text-slate-400 text-sm">
               FPS:{" "}
               <span className={`font-mono font-bold ${getStatusColor()}`}>
-                {stats.fps.toFixed(1)}
+                {(stats.fps || stats.totalFPS || 0).toFixed(1)}
               </span>
             </div>
             <div className="text-slate-400 text-sm">
               Cameras:{" "}
               <span className="text-cyan-400 font-semibold">
-                {stats.camerasOnline}
+                {stats.camerasOnline || 0}
               </span>
             </div>
             <div className="text-slate-400 text-sm">
               Detections:{" "}
               <span className="text-white font-semibold">
-                {stats.totalDetections}
+                {stats.totalDetections || 0}
               </span>
             </div>
             <div className="text-slate-400 text-sm">
               Anomalies:{" "}
               <span className="text-red-400 font-semibold">
-                {stats.anomalyCount}
+                {stats.anomalyCount || 0}
               </span>
             </div>
           </div>

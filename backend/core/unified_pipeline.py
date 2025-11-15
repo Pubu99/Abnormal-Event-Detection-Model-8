@@ -8,13 +8,29 @@ Date: 2025-10-17
 
 import sys
 from pathlib import Path
-sys.path.append(str(Path(__file__).parent.parent / "backend"))
+
+# Add paths for imports
+backend_path = str(Path(__file__).parent.parent / "backend")
+src_path = str(Path(__file__).parent.parent.parent / "src")
+sys.path.append(backend_path)
+sys.path.append(src_path)
 
 from services.motion_analysis import MotionAnalyzer
 from services.pose_estimation import PoseEstimator
 from services.rule_engine import RuleEngine, AlertLevel
 from services.object_tracking import SimpleTracker, SpeedAnalyzer
 from services.intelligent_fusion import IntelligentFusionEngine
+
+# Advanced tracking and classification
+try:
+    from models.object_tracker import get_object_tracker
+    from models.body_part_detector import get_body_part_detector
+    from models.contextual_classifier import get_contextual_classifier
+    ADVANCED_TRACKING_AVAILABLE = True
+except ImportError:
+    ADVANCED_TRACKING_AVAILABLE = False
+    print("⚠️  Advanced tracking modules not available - using basic tracking")
+
 import cv2
 import numpy as np
 from typing import Dict, List, Optional
@@ -75,9 +91,61 @@ class UnifiedDetectionPipeline:
         self.fusion_engine = IntelligentFusionEngine()
         print("   ✅ Intelligent Fusion Engine ready")
         
+        # Advanced tracking and contextual classification (if available)
+        if ADVANCED_TRACKING_AVAILABLE:
+            self.object_tracker = get_object_tracker(max_distance=50.0, fps=30)
+            self.body_part_detector = get_body_part_detector()
+            self.contextual_classifier = get_contextual_classifier()
+            print("   ✅ Object Tracker ready")
+            print("   ✅ Body Part Detector ready")
+            print("   ✅ Contextual Classifier ready")
+        else:
+            self.object_tracker = None
+            self.body_part_detector = None
+            self.contextual_classifier = None
+
+        # RL policy integration (disabled by default)
+        # To enable, set attributes on the `anomaly_detector` instance:
+        #   anomaly_detector.use_rl_policy = True
+        #   anomaly_detector.rl_threshold = 0.5  # probability threshold to accept alerts
+        self.use_rl_policy = getattr(anomaly_detector, 'use_rl_policy', False)
+        self.rl_threshold = float(getattr(anomaly_detector, 'rl_threshold', 0.5))
+
+        # Multi-rate processing and caches for performance
+        self.frame_count = 0
+        # By default use multi-rate processing to save CPU/GPU cycles.
+        # If `force_all_modalities` is set to True the pipeline will run
+        # ML and Pose every frame (or attempt a lightweight fallback)
+        # to guarantee that all modalities contribute to the fusion.
+        self.force_all_modalities = getattr(anomaly_detector, 'force_all_modalities', False)
+
+        # Adjust intervals for fast_mode to prioritize YOLO/motion and reduce heavy ML runs
+        if getattr(anomaly_detector, 'fast_mode', False):
+            ml_interval = 4 if not self.force_all_modalities else 1
+            pose_interval = 2 if not self.force_all_modalities else 1
+        else:
+            ml_interval = 1 if self.force_all_modalities else 10
+            pose_interval = 1 if self.force_all_modalities else 5
+
+        self.processing_intervals = {
+            'yolo': 1,      # every frame
+            'ml_model': ml_interval, # every N frames
+            'pose': pose_interval,      # every N frames
+            'motion': 1,    # every frame
+            'fusion': 1     # every frame (uses cached data)
+        }
+        self._cache = {
+            'ml_result': None,
+            'pose_result': None,
+            'motion_result': None
+        }
+
+        # Performance monitoring
+        self.perf_times = {k: [] for k in ['yolo', 'ml', 'pose', 'motion', 'fusion', 'total']}
+
         print("🚀 Unified Detection Pipeline initialized!\n")
     
-    def process_frame(self, frame: np.ndarray) -> Dict:
+    def process_frame(self, frame: np.ndarray, camera_id: Optional[str] = None) -> Dict:
         """
         Process single frame through complete pipeline
         
@@ -95,9 +163,14 @@ class UnifiedDetectionPipeline:
             'visualization': None
         }
         
+        import time
+        start_total = time.time()
+
         try:
             # 1. YOLO Object Detection with Tracking
+            t0 = time.time()
             yolo_results = self.anomaly_detector.detect_objects(frame)
+            self.perf_times['yolo'].append(time.time() - t0)
             
             # Convert YOLO format for other services
             yolo_detections = []
@@ -119,52 +192,123 @@ class UnifiedDetectionPipeline:
                 'class_names': yolo_results['objects']  # Keep original for backwards compatibility
             }
             
-            # 2. ML Model Prediction (if frame buffer ready)
+            # 2. ML Model Prediction (multi-rate with caching)
+            # Always append current frame to the temporal buffer
             self.anomaly_detector.frame_buffer.append(frame)
-            
             ml_prediction = None
-            if len(self.anomaly_detector.frame_buffer) == self.anomaly_detector.sequence_length:
-                # Convert frames to tensor sequence
-                sequence_tensor = self.anomaly_detector.create_sequence(
-                    list(self.anomaly_detector.frame_buffer)
-                )
-                pred_result = self.anomaly_detector.predict_sequence(sequence_tensor)
-                
-                # Transform for fusion engine (expects 'class' not 'predicted_class')
-                ml_prediction = {
-                    'class': pred_result['predicted_class'],
-                    'confidence': pred_result['confidence'],
-                    'probabilities': pred_result.get('probabilities', [])
-                }
-                
-                result['detections']['ml_model'] = {
-                    'predicted_class': pred_result['predicted_class'],
-                    'confidence': pred_result['confidence'],
-                    'is_anomaly': pred_result['is_anomaly'],
-                    'anomaly_score': pred_result.get('anomaly_score', 0.0),
-                    'top_3': pred_result.get('top3_predictions', [])  # Note: engine uses 'top3_predictions'
-                }
+            if (self.frame_count % self.processing_intervals['ml_model']) == 0:
+                t_ml = time.time()
+                # If we have a full buffer, run the full sequence model.
+                if len(self.anomaly_detector.frame_buffer) == self.anomaly_detector.sequence_length:
+                    # Use TTA if enabled on the detector to stabilize predictions
+                    if getattr(self.anomaly_detector, 'enable_tta', False):
+                        pred_result = self.anomaly_detector.predict_sequence_tta(
+                            list(self.anomaly_detector.frame_buffer)
+                        )
+                    else:
+                        sequence_tensor = self.anomaly_detector.create_sequence(
+                            list(self.anomaly_detector.frame_buffer)
+                        )
+                        pred_result = self.anomaly_detector.predict_sequence(sequence_tensor)
+
+                    ml_prediction = {
+                        'class': pred_result['predicted_class'],
+                        'confidence': pred_result['confidence'],
+                        'probabilities': pred_result.get('all_confidences', {})
+                    }
+                    result['detections']['ml_model'] = {
+                        'predicted_class': pred_result['predicted_class'],
+                        'confidence': pred_result['confidence'],
+                        'is_anomaly': pred_result['is_anomaly'],
+                        'anomaly_score': pred_result.get('anomaly_score', 0.0),
+                        'top_3': pred_result.get('top3_predictions', [])
+                    }
+                else:
+                    # If the buffer is not yet full but the user requested forcing all
+                    # modalities, produce a lightweight fallback prediction by
+                    # duplicating the current frame to form a sequence. This ensures
+                    # the fusion engine still receives an ML signal even before the
+                    # full temporal buffer is available.
+                    if self.force_all_modalities:
+                        try:
+                            frames_needed = self.anomaly_detector.sequence_length
+                            cur = list(self.anomaly_detector.frame_buffer)
+                            # pad/duplicate last frame to meet length
+                            while len(cur) < frames_needed:
+                                cur.append(frame)
+                            if getattr(self.anomaly_detector, 'enable_tta', False):
+                                pred_result = self.anomaly_detector.predict_sequence_tta(
+                                    cur[-frames_needed:]
+                                )
+                            else:
+                                seq = self.anomaly_detector.create_sequence(cur[-frames_needed:])
+                                pred_result = self.anomaly_detector.predict_sequence(seq)
+                            ml_prediction = {
+                                'class': pred_result['predicted_class'],
+                                'confidence': pred_result['confidence'],
+                                'probabilities': pred_result.get('all_confidences', {})
+                            }
+                            result['detections']['ml_model'] = {
+                                'predicted_class': pred_result['predicted_class'],
+                                'confidence': pred_result['confidence'],
+                                'is_anomaly': pred_result['is_anomaly'],
+                                'anomaly_score': pred_result.get('anomaly_score', 0.0),
+                                'top_3': pred_result.get('top3_predictions', [])
+                            }
+                        except Exception:
+                            ml_prediction = None
+                    else:
+                        ml_prediction = None
+                self._cache['ml_result'] = ml_prediction
+                self.perf_times['ml'].append(time.time() - t_ml)
+            else:
+                ml_prediction = self._cache.get('ml_result')
             
-            # 3. Motion Analysis
-            motion_result = self.motion_analyzer.analyze(frame)
-            
+            # 3. Motion Analysis (downscaled for speed)
+            if (self.frame_count % self.processing_intervals['motion']) == 0:
+                t_motion = time.time()
+                # Downscale to 50% for faster optical flow
+                h, w = frame.shape[:2]
+                motion_frame = cv2.resize(frame, (max(1, w//2), max(1, h//2)))
+                motion_result = self.motion_analyzer.analyze(motion_frame)
+                self._cache['motion_result'] = motion_result
+                self.perf_times['motion'].append(time.time() - t_motion)
+            else:
+                motion_result = self._cache.get('motion_result')
+
             result['detections']['motion'] = {
-                'magnitude': motion_result.motion_magnitude,
-                'direction': motion_result.motion_direction,
-                'regions_count': len(motion_result.motion_regions),
-                'is_unusual': motion_result.is_unusual,
-                'anomaly_type': motion_result.anomaly_type,
-                'confidence': motion_result.confidence
+                'magnitude': getattr(motion_result, 'motion_magnitude', 0.0),
+                'direction': getattr(motion_result, 'motion_direction', 0.0),
+                'regions_count': len(getattr(motion_result, 'motion_regions', []) or []),
+                'is_unusual': getattr(motion_result, 'is_unusual', False),
+                'anomaly_type': getattr(motion_result, 'anomaly_type', None),
+                'confidence': getattr(motion_result, 'confidence', 0.0)
             }
-            
-            # 4. Pose Estimation
-            pose_result = self.pose_estimator.analyze(frame)
-            
+
+            # 4. Pose Estimation (conditional + multi-rate)
+            # Only run pose occasionally and only if people detected
+            people_count = len([obj for obj in yolo_detections if obj['class'] == 'person'])
+            if (self.frame_count % self.processing_intervals['pose']) == 0 and people_count > 0:
+                t_pose = time.time()
+                # Downscale for pose speed
+                h, w = frame.shape[:2]
+                pose_frame = cv2.resize(frame, (max(1, w//2), max(1, h//2)))
+                pose_result = self.pose_estimator.analyze(pose_frame, camera_id=camera_id)
+                self._cache['pose_result'] = pose_result
+                self.perf_times['pose'].append(time.time() - t_pose)
+            else:
+                pose_result = self._cache.get('pose_result') or type('empty', (), {
+                    'persons_detected': 0,
+                    'is_anomalous': False,
+                    'anomaly_type': None,
+                    'confidence': 0.0
+                })()
+
             result['detections']['pose'] = {
-                'persons_detected': pose_result.persons_detected,
-                'is_anomalous': pose_result.is_anomalous,
-                'anomaly_type': pose_result.anomaly_type,
-                'confidence': pose_result.confidence
+                'persons_detected': getattr(pose_result, 'persons_detected', 0),
+                'is_anomalous': getattr(pose_result, 'is_anomalous', False),
+                'anomaly_type': getattr(pose_result, 'anomaly_type', None),
+                'confidence': getattr(pose_result, 'confidence', 0.0)
             }
             
             # 5. Object Tracking
@@ -188,20 +332,205 @@ class UnifiedDetectionPipeline:
                 'lost_tracks': tracking_result.lost_tracks
             }
             
-            # 6. Speed Analysis
+            # 5.5 ADVANCED OBJECT TRACKING & CONTEXTUAL ANALYSIS (if available)
+            advanced_tracks = []
+            contextual_predictions = []
+            if ADVANCED_TRACKING_AVAILABLE and self.object_tracker is not None:
+                try:
+                    # Prepare detections for advanced tracker (needs centroid + keypoints)
+                    advanced_detections = []
+                    for obj in yolo_detections:
+                        x, y, w, h = obj['bbox']
+                        centroid = (x + w//2, y + h//2)
+                        
+                        detection_dict = {
+                            'class': obj['class'],
+                            'confidence': obj['confidence'],
+                            'bbox': obj['bbox'],
+                            'centroid': centroid,
+                        }
+                        
+                        # Extract pose keypoints if available for this person
+                        if obj['class'] == 'person' and pose_result and hasattr(pose_result, 'persons_detected'):
+                            if pose_result.persons_detected > 0:
+                                # Use pose keypoints if available (simplified - attach empty for now)
+                                detection_dict['keypoints'] = []
+                        
+                        advanced_detections.append(detection_dict)
+                    
+                    # Update advanced tracker
+                    advanced_tracks = self.object_tracker.update(advanced_detections)
+                    
+                    # For each track, perform contextual analysis
+                    for track_id, track in advanced_tracks.items():
+                        try:
+                            # Create pose context from body part detector
+                            pose_context = None
+                            if self.body_part_detector and track.class_name == 'person':
+                                # Extract body part context (simplified - would use pose keypoints)
+                                pose_context = self.body_part_detector.analyze_pose(
+                                    keypoints=[],  # would come from pose estimator
+                                    detected_objects=yolo_detections,
+                                    frame_height=frame.shape[0],
+                                    frame_width=frame.shape[1]
+                                )
+                            
+                            # Classify anomaly with context
+                            if self.contextual_classifier:
+                                prediction = self.contextual_classifier.classify_track(
+                                    track=track,
+                                    pose_context=pose_context,
+                                    restricted_zones=None,  # would be from config
+                                    known_persons=None
+                                )
+                                
+                                # Calculate track duration and other contextual metrics
+                                track_duration = track.age_frames / 30.0  # Convert frames to seconds (assuming 30 FPS)
+                                
+                                # Calculate loitering score (higher if standing still)
+                                loitering_score = 0.0
+                                if track.movement_speed < 0.5 and track_duration > 10.0:
+                                    loitering_score = min(track_duration / 20.0, 1.0)
+                                
+                                # Calculate temporal consistency (how stable the track is)
+                                temporal_consistency = min(track.confidence, 1.0)
+                                
+                                contextual_predictions.append({
+                                    'track_id': track_id,
+                                    'anomaly_type': prediction.anomaly_type.value,
+                                    'confidence': prediction.confidence,
+                                    'threat_level': prediction.threat_level,
+                                    'reasoning': prediction.reasoning,
+                                    # Additional contextual features for RL training
+                                    'track_duration': track_duration,
+                                    'movement_speed': prediction.movement_speed,
+                                    'loitering_score': loitering_score,
+                                    'track_confidence': track.confidence,
+                                    'gesture_score': prediction.pose_threat,
+                                    'held_object_count': len(track.held_items),
+                                    'body_pose_score': prediction.pose_threat,
+                                    'temporal_consistency': temporal_consistency
+                                })
+                        except Exception as e:
+                            print(f"⚠️  Error in contextual analysis for track {track_id}: {e}")
+                    
+                    result['detections']['advanced_tracking'] = {
+                        'tracks': len(advanced_tracks),
+                        'contextual_predictions': contextual_predictions
+                    }
+                    
+                except Exception as e:
+                    print(f"⚠️  Error in advanced tracking: {e}")
+            
+            # Speed Analysis
             speed_analysis = self.speed_analyzer.analyze(tracking_result.tracked_objects)
             result['detections']['speed'] = speed_analysis
             
-            # 7. PROFESSIONAL INTELLIGENT FUSION ENGINE
+            # 6. PROFESSIONAL INTELLIGENT FUSION ENGINE
             # Weighted scoring: ML (40%), YOLO (25%), Pose (20%), Motion (15%)
             # Anomaly-only reporting: No "Normal" highlights (threshold 0.70)
+            # NOW WITH CONTEXTUAL PREDICTIONS (Priority 0)
+            t_f = time.time()
             fusion_detection = self.fusion_engine.fuse_detections(
                 ml_result=ml_prediction,
                 yolo_detections=yolo_detections,
                 pose_result=result['detections']['pose'],
                 motion_result=result['detections']['motion'],
-                frame_number=len(self.anomaly_detector.frame_buffer)
+                frame_number=len(self.anomaly_detector.frame_buffer),
+                contextual_predictions=contextual_predictions if contextual_predictions else None
             )
+            # If the fusion engine has a global decline-all suppression active,
+            # or this specific detection id has been suppressed, then suppress
+            # the fusion_detection so no alerts will be produced or sent to the UI.
+            try:
+                # Only suppress detections when their specific id is in the
+                # suppressed_ids set. Remove reliance on the old
+                # decline_all_active global flag which could block all future
+                # detections unintentionally.
+                if fusion_detection is not None and getattr(self.fusion_engine, 'suppressed_ids', None) is not None:
+                    if fusion_detection.detection_id in self.fusion_engine.suppressed_ids:
+                        fusion_detection = None
+            except Exception:
+                pass
+            self.perf_times['fusion'].append(time.time() - t_f)
+
+            # RL policy consult: allow an RL agent to accept/suppress detections
+            rl_decision = None
+            try:
+                if fusion_detection is not None and self.use_rl_policy:
+                    from services.rl_agent import get_agent
+                    agent = get_agent()
+                    if agent is not None:
+                        severity_map = {'CRITICAL': 3, 'HIGH': 2, 'MEDIUM': 1, 'LOW': 0}
+                        features = {
+                            'fusion_score': float(fusion_detection.fusion_score or 0.0),
+                            'ml_score': float(fusion_detection.ml_score or 0.0),
+                            'object_score': float(fusion_detection.object_score or 0.0),
+                            'pose_score': float(fusion_detection.pose_score or 0.0),
+                            'motion_score': float(fusion_detection.motion_score or 0.0),
+                            'consensus_count': float(fusion_detection.consensus_count or 0),
+                            'confidence': float(fusion_detection.confidence or 0.0),
+                            'severity': float(severity_map.get(fusion_detection.severity.value if fusion_detection.severity else 'LOW', 0))
+                        }
+                        prob = agent.predict_proba(features)
+                        rl_decision = {'probability': prob, 'accepted': prob >= self.rl_threshold}
+                        # expose RL decision to frontend via result['fusion'] later
+                        # If agent rejects, suppress the fusion_detection (no alerts)
+                        if not rl_decision['accepted']:
+                            # mark suppression
+                            result['fusion'] = {
+                                'anomaly_type': fusion_detection.anomaly_type.value,
+                                'severity': fusion_detection.severity.value,
+                                'fusion_score': round(fusion_detection.fusion_score, 3),
+                                'confidence': round(fusion_detection.confidence, 3),
+                                'reasoning': fusion_detection.reasoning,
+                                'explanation': fusion_detection.explanation,
+                                'rl_policy': {
+                                    'accepted': False,
+                                    'probability': prob,
+                                    'threshold': self.rl_threshold
+                                }
+                            }
+                            # suppress alerts and mark as normal for downstream
+                            result['anomaly_detected'] = False
+                            result['alerts'] = []
+                            result['threat_level'] = 'NORMAL'
+                            result['is_dangerous'] = False
+                            result['summary'] = f"Detection suppressed by RL policy (p={prob:.3f})"
+                            fusion_detection = None
+            except Exception:
+                # non-fatal; if RL agent not available just continue
+                rl_decision = None
+
+            # Always provide a top-level score breakdown for the UI so the
+            # "DETECTION METHODS USED" panel shows all modalities even when
+            # fusion does not flag an anomaly. These are best-effort scores
+            # computed from the most recent modality outputs / cache.
+            try:
+                ml_score = ml_prediction.get('confidence', 0.0) if ml_prediction else 0.0
+            except Exception:
+                ml_score = 0.0
+
+            # Simple object score: prioritize dangerous objects, otherwise use
+            # normalized object count (cap at 5 objects).
+            try:
+                dangerous_present = any(o['class'] in ['gun', 'knife', 'weapon', 'pistol', 'rifle', 'fire'] for o in yolo_detections)
+                if dangerous_present:
+                    object_score = 1.0
+                else:
+                    object_score = min(len(yolo_detections) / 5.0, 1.0)
+            except Exception:
+                object_score = 0.0
+
+            pose_score = float(result['detections']['pose'].get('confidence', 0.0))
+            motion_score = float(result['detections']['motion'].get('confidence', 0.0))
+
+            result['score_breakdown'] = {
+                'ml_model': {'score': round(ml_score, 3), 'weight': '40%'},
+                'yolo_objects': {'score': round(object_score, 3), 'weight': '25%'},
+                'pose_estimation': {'score': round(pose_score, 3), 'weight': '20%'},
+                'motion_analysis': {'score': round(motion_score, 3), 'weight': '15%'}
+            }
             
             # ONLY REPORT ANOMALIES (fusion_score >= 0.70)
             if fusion_detection is None:
@@ -334,16 +663,40 @@ class UnifiedDetectionPipeline:
             # ⭐ OPTIMIZED ENCODING FOR SMOOTH REAL-TIME STREAMING ⭐
             # Quality 70 = Optimal balance for real-time (faster encoding/decoding)
             # JPEG_OPTIMIZE = 1 enables Huffman optimization for smaller files
+            # Aggressive but reasonable compression for real-time
             _, buffer = cv2.imencode('.jpg', vis_frame, [
-                cv2.IMWRITE_JPEG_QUALITY, 70,  # Reduced to 70 for speed
-                cv2.IMWRITE_JPEG_OPTIMIZE, 1   # Enable optimization
+                cv2.IMWRITE_JPEG_QUALITY, 60,
+                cv2.IMWRITE_JPEG_OPTIMIZE, 1
             ])
             result['frame_base64'] = base64.b64encode(buffer).decode('utf-8')
             
         except Exception as e:
             result['error'] = str(e)
             print(f"❌ Error in pipeline: {e}")
-        
+
+        # Performance logging
+        total_elapsed = time.time() - start_total
+        self.perf_times['total'].append(total_elapsed)
+        self.frame_count += 1
+        # log every 30 frames
+        if self.frame_count % 30 == 0:
+            try:
+                import numpy as _np
+                print('\n' + '='*60)
+                print('📊 PERFORMANCE (Last 30 frames)')
+                print('='*60)
+                for key, times in self.perf_times.items():
+                    if times:
+                        avg_ms = _np.mean(times[-30:]) * 1000
+                        print(f"   {key.upper():12s}: {avg_ms:6.2f} ms")
+                if self.perf_times['total']:
+                    avg_total = _np.mean(self.perf_times['total'][-30:])
+                    fps = 1.0 / avg_total if avg_total > 0 else 0
+                    print(f"\n   TARGET: >20 FPS | CURRENT: {fps:.1f} FPS")
+                print('='*60 + '\n')
+            except Exception:
+                pass
+
         return result
     
     def _create_visualization(self,

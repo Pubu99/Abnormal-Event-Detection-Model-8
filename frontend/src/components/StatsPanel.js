@@ -1,6 +1,6 @@
 import React from "react";
 
-export default function StatsPanel({ stats, currentDetection }) {
+export default function StatsPanel({ stats = {}, currentDetection }) {
   const getThreatLevel = () => {
     if (!currentDetection) return { level: "SECURE", color: "emerald" };
     const severity = currentDetection.severity;
@@ -64,7 +64,7 @@ export default function StatsPanel({ stats, currentDetection }) {
               Threats
             </p>
             <p className="text-red-400 text-sm sm:text-xl md:text-2xl font-bold mt-1 sm:mt-2">
-              {stats.anomalyCount}
+              {stats.anomalyCount || 0}
             </p>
             <p className="text-slate-400 text-[10px] sm:text-xs mt-0.5 sm:mt-1 truncate">
               Detected
@@ -96,7 +96,7 @@ export default function StatsPanel({ stats, currentDetection }) {
               Cameras
             </p>
             <p className="text-cyan-400 text-sm sm:text-xl md:text-2xl font-bold mt-1 sm:mt-2">
-              {stats.camerasOnline}
+              {stats.camerasOnline || 0}
             </p>
             <p className="text-slate-400 text-[10px] sm:text-xs mt-0.5 sm:mt-1 truncate">
               Online
@@ -128,7 +128,7 @@ export default function StatsPanel({ stats, currentDetection }) {
               Speed
             </p>
             <p className="text-purple-400 text-sm sm:text-xl md:text-2xl font-bold mt-1 sm:mt-2">
-              {stats.fps.toFixed(1)}
+              {(stats.fps || 0).toFixed(1)}
             </p>
             <p className="text-slate-400 text-[10px] sm:text-xs mt-0.5 sm:mt-1 truncate">
               FPS

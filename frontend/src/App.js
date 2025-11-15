@@ -1,9 +1,16 @@
-import React from "react";
+import React, { useState } from "react";
 import "./App.css";
 import "./styles/professional.css";
 import ProfessionalDashboardV2 from "./components/ProfessionalDashboardV2";
+import MultiCameraDashboard from "./components/MultiCameraDashboard";
+import AdminPanel from "./components/AdminPanel";
+import AnomalyHistory from "./components/AnomalyHistory";
 
 function App() {
+  const [showAdmin, setShowAdmin] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [viewMode, setViewMode] = useState("single"); // "single" or "multi"
+  
   return (
     <div className="min-h-screen bg-slate-950">
       {/* Professional Header */}
@@ -47,6 +54,27 @@ function App() {
                 <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
                 <span className="text-slate-400 text-sm">System Online</span>
               </div>
+              {/* View Mode Toggle */}
+              <button
+                onClick={() => setViewMode(viewMode === "single" ? "multi" : "single")}
+                className="ml-4 px-3 py-1 rounded bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium transition"
+                title={viewMode === "single" ? "Switch to Multi-Camera Grid" : "Switch to Single Camera"}
+              >
+                {viewMode === "single" ? "📹 Multi-Camera Grid" : "🎥 Single Camera"}
+              </button>
+              {/* Admin & History toggles */}
+              <button
+                onClick={() => setShowHistory(true)}
+                className="ml-2 px-3 py-1 rounded bg-slate-800 text-slate-200 text-sm hover:bg-slate-700 transition"
+              >
+                History
+              </button>
+              <button
+                onClick={() => setShowAdmin(true)}
+                className="ml-2 px-3 py-1 rounded bg-slate-800 text-slate-200 text-sm hover:bg-slate-700 transition"
+              >
+                Admin
+              </button>
             </div>
           </div>
         </div>
@@ -54,8 +82,15 @@ function App() {
 
       {/* Main Dashboard */}
       <main>
-        <ProfessionalDashboardV2 />
+        {viewMode === "multi" ? (
+          <MultiCameraDashboard />
+        ) : (
+          <ProfessionalDashboardV2 />
+        )}
       </main>
+
+      {showAdmin && <AdminPanel onClose={() => setShowAdmin(false)} />}
+      {showHistory && <AnomalyHistory onClose={() => setShowHistory(false)} />}
 
       {/* Professional Footer */}
       <footer className="bg-slate-900/50 backdrop-blur-sm border-t border-slate-800 mt-8">
