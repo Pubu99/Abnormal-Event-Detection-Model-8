@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import axios from 'axios';
 
 export default function AnomalyHistory({ onClose }) {
@@ -8,11 +8,7 @@ export default function AnomalyHistory({ onClose }) {
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('');
 
-  useEffect(() => {
-    fetchEntries();
-  }, []);
-
-  async function fetchEntries() {
+  const fetchEntries = useCallback(async () => {
     setLoading(true);
     setStatus('');
     try {
@@ -28,7 +24,11 @@ export default function AnomalyHistory({ onClose }) {
     } finally {
       setLoading(false);
     }
-  }
+  }, [date, limit]);
+
+  useEffect(() => {
+    fetchEntries();
+  }, [fetchEntries]);
 
   const formatTimestamp = (ts) => {
     try {

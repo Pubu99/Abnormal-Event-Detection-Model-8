@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import '../styles/professional.css';
 
+// Environment variables for WebSocket URL
+const WS_BASE = process.env.REACT_APP_WS_BASE || 'ws://localhost:8000';
+
 /**
  * Multi-Camera Grid Component
  * 
@@ -39,9 +42,6 @@ export default function MultiCameraGrid({ cameras, isAnalyzing = false, onCamera
     isAnalyzingRef.current = isAnalyzing;
     console.log(`🔄 Analysis state changed: ${isAnalyzing ? 'STARTED' : 'STOPPED'}`);
   }, [isAnalyzing]);
-
-  const apiBase = process.env.REACT_APP_API_BASE || 'http://localhost:8000';
-  const wsBase = apiBase.replace('http', 'ws');
 
   // Calculate optimal grid layout based on camera count
   useEffect(() => {
@@ -280,7 +280,7 @@ export default function MultiCameraGrid({ cameras, isAnalyzing = false, onCamera
 
   // Start analysis WebSocket for webcam
   const startAnalysisWebSocket = useCallback((camera, videoElement) => {
-    const wsUrl = `${wsBase}/ws/stream/${camera.id}`;
+    const wsUrl = `${WS_BASE}/ws/stream/${camera.id}`;
     const ws = new WebSocket(wsUrl);
     let frameInterval = null;
 
@@ -399,7 +399,8 @@ export default function MultiCameraGrid({ cameras, isAnalyzing = false, onCamera
       if (frameInterval) clearInterval(frameInterval);
       if (ws.readyState === WebSocket.OPEN) ws.close();
     };
-  }, [wsBase, handleDetection]); // Removed isAnalyzing dependency - using ref instead
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handleDetection, drawDetectionOverlay]);
 
   // Connect webcam
   const connectWebcam = useCallback(async (camera) => {
@@ -464,7 +465,7 @@ export default function MultiCameraGrid({ cameras, isAnalyzing = false, onCamera
 
   // Connect IP camera
   const connectIPCamera = useCallback((camera) => {
-    const wsUrl = `${wsBase}/ws/stream/${camera.id}`;
+    const wsUrl = `${WS_BASE}/ws/stream/${camera.id}`;
     const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
@@ -550,7 +551,8 @@ export default function MultiCameraGrid({ cameras, isAnalyzing = false, onCamera
     };
 
     wsConnections.current[camera.id] = ws;
-  }, [cameras, wsBase, handleDetection, renderFrame]); // Add missing dependencies
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [cameras, handleDetection, renderFrame, drawDetectionOverlay]); // WS_BASE is a constant
 
   // Get color based on severity
   const getSeverityColor = (severity) => {

@@ -495,12 +495,13 @@ class AnomalyDetector:
         
         return frames
     
-    def detect_objects(self, frame: np.ndarray) -> Dict:
+    def detect_objects(self, frame: np.ndarray, camera_id: Optional[str] = None) -> Dict:
         """
         Detect and track objects using YOLO with persistent tracking.
         
         Args:
             frame: Input frame (BGR)
+            camera_id: Optional camera identifier for ROI-/camera-specific filters
             
         Returns:
             Dict with detected objects, bounding boxes, and tracking IDs
@@ -515,94 +516,69 @@ class AnomalyDetector:
         else:
             frame_resized = frame
 
-        # Prefer thread worker for low-latency; if a separate process worker is enabled
-        # use it instead (process provides better isolation from main process).
+        # Prefer separate process worker when enabled
         if getattr(self, 'yolo_process', False) and getattr(self, '_yolo_in_q', None) is not None:
             try:
-                # Post latest frame non-blocking (drop if queue is full)
                 try:
                     self._yolo_in_q.put_nowait(frame.copy())
                 except Exception:
                     pass
-
                 try:
-                    # Try to read latest processed dict
                     proc_res = self._yolo_out_q.get_nowait()
                     now = cv2.getTickCount() / cv2.getTickFrequency()
                     with self._yolo_lock:
                         self._last_yolo_result = proc_res
                         self._last_yolo_time = now
-                    return proc_res
+                    return self._post_filter_detections(proc_res, (h, w), camera_id)
                 except Exception:
-                    # Fall back to cached result if available
                     with self._yolo_lock:
                         if self._last_yolo_result is not None:
-                            return self._last_yolo_result
-                # If no cached result yet, fall through to sync path
+                            return self._post_filter_detections(self._last_yolo_result, (h, w), camera_id)
             except Exception:
                 pass
 
+        # Prefer thread worker for low-latency when fast_mode
         if getattr(self, 'fast_mode', False) and getattr(self, '_yolo_queue', None) is not None:
             try:
-                # Post latest frame non-blocking (drop if queue is full)
                 try:
                     self._yolo_queue.put_nowait(frame.copy())
                 except queue.Full:
                     pass
-
                 with self._yolo_lock:
                     if self._last_yolo_result is not None:
                         # thread worker stores ultralytics Results object
-                        return self._convert_yolo_results(self._last_yolo_result, scale)
-                # If no cached result yet, fall back to synchronous detection below
+                        raw = self._convert_yolo_results(self._last_yolo_result, scale)
+                        return self._post_filter_detections(raw, (h, w), camera_id)
             except Exception:
-                # proceed to synchronous path
-                pass
-            try:
-                # Post latest frame non-blocking (drop if queue is full)
-                try:
-                    self._yolo_queue.put_nowait(frame.copy())
-                except queue.Full:
-                    pass
-
-                with self._yolo_lock:
-                    if self._last_yolo_result is not None:
-                        return self._convert_yolo_results(self._last_yolo_result, scale)
-                # If no cached result yet, fall back to synchronous detection below
-            except Exception:
-                # proceed to synchronous path
                 pass
 
         # Build kwargs for track - some backends accept imgsz/conf/iou/half
         track_kwargs = dict(persist=True, verbose=False)
         try:
-            # Choose imgsz smaller when fast_mode enabled (or configured yolo_imgsz)
             imgsz = self.yolo_fast_imgsz if getattr(self, 'fast_mode', False) else int(getattr(self, 'yolo_imgsz', 640))
             track_kwargs.update({'conf': 0.35, 'iou': 0.5, 'imgsz': imgsz})
             if self.use_fp16:
                 track_kwargs.update({'half': True})
 
-            # Simple caching to avoid running YOLO on every frame when unnecessary.
-            # If a cached result exists and is recent enough, reuse it.
+            # Simple caching to avoid running YOLO on every frame
             now = cv2.getTickCount() / cv2.getTickFrequency()
             with self._yolo_lock:
                 if self._last_yolo_result is not None and (now - float(self._last_yolo_time)) < float(getattr(self, 'yolo_min_interval', 0.08)):
                     results = self._last_yolo_result
                 else:
                     results = self.yolo.track(frame_resized, **track_kwargs)[0]
-                    # store raw ultralytics results for thread-worker compatibility
                     self._last_yolo_result = results
                     self._last_yolo_time = now
         except Exception:
-            # Fallback - try without extra kwargs
             results = self.yolo.track(frame_resized, persist=True, verbose=False)[0]
 
         # If the result is already a simplified dict (from process worker), use it
         if isinstance(results, dict):
-            return results
+            return self._post_filter_detections(results, (h, w), camera_id)
 
-        # Otherwise convert the ultralytics Results object to the simple dict
-        return self._convert_yolo_results(results, scale)
+        # Otherwise convert and post-filter
+        raw = self._convert_yolo_results(results, scale)
+        return self._post_filter_detections(raw, (h, w), camera_id)
 
     def _convert_yolo_results(self, results_obj, scale: float) -> Dict:
         """Convert raw ultralytics results object to the detections dict (used for cached results)."""
@@ -635,6 +611,139 @@ class AnomalyDetector:
                 detections['dangerous'] = True
 
         return detections
+
+    # --------------------
+    # False-positive reduction utilities
+    # --------------------
+    def _get_yolo_filter_config(self) -> Dict:
+        """Assemble YOLO post-filtering configuration from self.config with safe defaults."""
+        # Defaults chosen to reduce common false positives while keeping people/vehicles
+        defaults = {
+            'class_thresholds': {
+                # people/vehicles
+                'person': 0.55,
+                'car': 0.55, 'truck': 0.55, 'bus': 0.55, 'motorcycle': 0.55, 'bicycle': 0.55,
+                # weapons and hazardous
+                'knife': 0.70, 'scissors': 0.70, 'gun': 0.75, 'rifle': 0.75, 'pistol': 0.75, 'weapon': 0.75,
+                'fire': 0.80, 'smoke': 0.80, 'explosion': 0.85,
+                # bags (prone to FP)
+                'backpack': 0.65, 'suitcase': 0.65, 'handbag': 0.65
+            },
+            # If set, only keep these classes; else accept any but with thresholds above
+            'class_whitelist': [
+                'person', 'car', 'truck', 'bus', 'motorcycle', 'bicycle',
+                'knife', 'scissors', 'gun', 'rifle', 'pistol', 'weapon',
+                'fire', 'smoke', 'explosion', 'backpack', 'suitcase', 'handbag'
+            ],
+            'use_whitelist': True,
+            # Geometry filters
+            'min_box_area_ratio': 0.0002,  # drop boxes < 0.02% of frame area
+            'max_aspect_ratio': 4.0,       # drop extremely skinny boxes
+            'min_size_px': 8,              # min width/height in pixels
+            # Temporal confirmation
+            'require_persistence_frames': 2  # require track to persist this many frames if below 0.85 conf
+        }
+        try:
+            cfg = dict(defaults)
+            yolo_cfg = (self.config.get('yolo') or {}) if hasattr(self, 'config') else {}
+            # merge nested dicts
+            if 'class_thresholds' in yolo_cfg:
+                cfg['class_thresholds'].update(dict(yolo_cfg['class_thresholds']))
+            for k in ['class_whitelist', 'use_whitelist', 'min_box_area_ratio', 'max_aspect_ratio', 'min_size_px', 'require_persistence_frames']:
+                if k in yolo_cfg:
+                    cfg[k] = yolo_cfg[k]
+        except Exception:
+            cfg = defaults
+        return cfg
+
+    def _post_filter_detections(self, det: Dict, frame_hw: Tuple[int, int], camera_id: Optional[str]) -> Dict:
+        """Apply confidence/geometry/persistence filters to reduce false positives."""
+        try:
+            H, W = frame_hw
+            area = float(H * W)
+            cfg = self._get_yolo_filter_config()
+            class_thr = cfg['class_thresholds']
+            whitelist = set(cfg['class_whitelist']) if cfg.get('use_whitelist', False) else None
+            min_area = float(cfg['min_box_area_ratio']) * area
+            max_ar = float(cfg['max_aspect_ratio'])
+            min_px = int(cfg['min_size_px'])
+            persist_needed = int(cfg['require_persistence_frames'])
+
+            # Initialize track persistence cache
+            if not hasattr(self, '_track_persistence'):
+                self._track_persistence = {}
+                self._frame_counter = 0
+            self._frame_counter += 1
+
+            f_objects, f_boxes, f_confs, f_ids = [], [], [], []
+            dangerous = False
+
+            for cls, box, conf, tid in zip(det.get('objects', []), det.get('boxes', []), det.get('confidences', []), det.get('track_ids', [])):
+                try:
+                    cname = str(cls).lower()
+                    # Whitelist filtering
+                    if whitelist is not None and cname not in whitelist:
+                        continue
+
+                    # Geometry checks
+                    x1, y1, x2, y2 = map(float, box)
+                    w = max(0.0, x2 - x1)
+                    h = max(0.0, y2 - y1)
+                    if w < min_px or h < min_px:
+                        continue
+                    box_area = w * h
+                    if box_area < min_area:
+                        continue
+                    ar = (w / max(h, 1e-6)) if h > 0 else 999.0
+                    if ar > max_ar or (1.0/ar) > max_ar:
+                        continue
+
+                    # Confidence threshold by class with fallback
+                    base_thr = class_thr.get(cname, 0.60)
+                    score = float(conf)
+
+                    # Temporal persistence: allow slightly lower conf if the track persisted
+                    ok = False
+                    if score >= max(0.85, base_thr):
+                        ok = True
+                    else:
+                        # update persistence counter for this track id (if available)
+                        if tid is not None:
+                            st = self._track_persistence.get(tid, {'last_seen': self._frame_counter - 100, 'count': 0})
+                            if self._frame_counter - st['last_seen'] <= 2:
+                                st['count'] = min(st['count'] + 1, persist_needed + 2)
+                            else:
+                                st['count'] = 1
+                            st['last_seen'] = self._frame_counter
+                            self._track_persistence[tid] = st
+                            if st['count'] >= persist_needed and score >= (base_thr - 0.05):
+                                ok = True
+                        else:
+                            # No tracking id; be stricter
+                            ok = score >= base_thr
+
+                    if not ok:
+                        continue
+
+                    f_objects.append(cname)
+                    f_boxes.append([x1, y1, x2, y2])
+                    f_confs.append(score)
+                    f_ids.append(tid)
+                    if any(d in cname for d in self.dangerous_objects):
+                        dangerous = True
+                except Exception:
+                    continue
+
+            return {
+                'objects': f_objects,
+                'boxes': f_boxes,
+                'confidences': f_confs,
+                'track_ids': f_ids,
+                'dangerous': dangerous
+            }
+        except Exception:
+            # On any failure, return the original detections to avoid breaking pipeline
+            return det
 
     def yolo_infer_frame(self, frame: np.ndarray, mode: Optional[str] = None) -> Optional[Dict]:
         """Synchronous helper to run one YOLO inference on a frame.

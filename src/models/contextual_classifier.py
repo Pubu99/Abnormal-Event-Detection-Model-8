@@ -344,7 +344,10 @@ class ContextualClassifier:
                 reasons.append(f"Erratic movement detected")
         
         elif anomaly_type == AnomalyType.NORMAL:
-            reasons.append("Normal activity detected")
+            # ⭐ FIX: Don't add "Normal activity detected" to reasoning
+            # This is an anomaly detection system - we only report threats, not normal activity
+            # If truly normal, this prediction will be filtered by fusion engine
+            pass
         
         # Add component details
         if pose_threat > 0.5 and pose_context:

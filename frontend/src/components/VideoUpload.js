@@ -1,13 +1,14 @@
 import React, { useState, useRef } from "react";
 import axios from "axios";
 
+// Environment variable for API URL
+const API_URL = process.env.REACT_APP_API_BASE || "http://localhost:8000";
+
 function VideoUpload({ onAnalysisComplete, isAnalyzing, setIsAnalyzing }) {
   const [selectedFile, setSelectedFile] = useState(null);
   const [dragActive, setDragActive] = useState(false);
   const [progress, setProgress] = useState(0);
   const fileInputRef = useRef(null);
-
-  const API_URL = "http://localhost:8000";
 
   const handleDrag = (e) => {
     e.preventDefault();

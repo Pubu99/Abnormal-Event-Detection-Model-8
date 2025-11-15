@@ -88,6 +88,20 @@ class UnifiedDetectionPipeline:
         )
         print("   ✅ Rule Engine ready")
         
+        # 📦 OBJECT ANOMALY DETECTOR: Comprehensive object-based anomaly detection
+        try:
+            from services.object_anomaly_detector import get_object_anomaly_detector
+            self.object_anomaly_detector = get_object_anomaly_detector(
+                abandoned_threshold=15.0,
+                stationary_threshold=2.0,
+                crowd_density_threshold=15,
+                fps=30.0
+            )
+            print("   📦 Object Anomaly Detector ready")
+        except ImportError:
+            self.object_anomaly_detector = None
+            print("   ⚠️ Object Anomaly Detector unavailable")
+        
         self.fusion_engine = IntelligentFusionEngine()
         print("   ✅ Intelligent Fusion Engine ready")
         
@@ -121,8 +135,8 @@ class UnifiedDetectionPipeline:
 
         # Adjust intervals for fast_mode to prioritize YOLO/motion and reduce heavy ML runs
         if getattr(anomaly_detector, 'fast_mode', False):
-            ml_interval = 4 if not self.force_all_modalities else 1
-            pose_interval = 2 if not self.force_all_modalities else 1
+            ml_interval = 3 if not self.force_all_modalities else 1    # Run ML every 3 frames in fast mode (was 2)
+            pose_interval = 4 if not self.force_all_modalities else 2   # Run pose every 4 frames (was 3)
         else:
             ml_interval = 1 if self.force_all_modalities else 10
             pose_interval = 1 if self.force_all_modalities else 5
@@ -131,7 +145,7 @@ class UnifiedDetectionPipeline:
             'yolo': 1,      # every frame
             'ml_model': ml_interval, # every N frames
             'pose': pose_interval,      # every N frames
-            'motion': 1,    # every frame
+            'motion': 2,    # every 2 frames (was every frame - optical flow is expensive)
             'fusion': 1     # every frame (uses cached data)
         }
         self._cache = {
@@ -169,7 +183,7 @@ class UnifiedDetectionPipeline:
         try:
             # 1. YOLO Object Detection with Tracking
             t0 = time.time()
-            yolo_results = self.anomaly_detector.detect_objects(frame)
+            yolo_results = self.anomaly_detector.detect_objects(frame, camera_id=camera_id)
             self.perf_times['yolo'].append(time.time() - t0)
             
             # Convert YOLO format for other services
@@ -264,12 +278,12 @@ class UnifiedDetectionPipeline:
             else:
                 ml_prediction = self._cache.get('ml_result')
             
-            # 3. Motion Analysis (downscaled for speed)
+            # 3. Motion Analysis (heavily downscaled for speed)
             if (self.frame_count % self.processing_intervals['motion']) == 0:
                 t_motion = time.time()
-                # Downscale to 50% for faster optical flow
+                # Downscale to 33% for much faster optical flow (was 50%)
                 h, w = frame.shape[:2]
-                motion_frame = cv2.resize(frame, (max(1, w//2), max(1, h//2)))
+                motion_frame = cv2.resize(frame, (max(1, w//3), max(1, h//3)))
                 motion_result = self.motion_analyzer.analyze(motion_frame)
                 self._cache['motion_result'] = motion_result
                 self.perf_times['motion'].append(time.time() - t_motion)
@@ -290,10 +304,15 @@ class UnifiedDetectionPipeline:
             people_count = len([obj for obj in yolo_detections if obj['class'] == 'person'])
             if (self.frame_count % self.processing_intervals['pose']) == 0 and people_count > 0:
                 t_pose = time.time()
-                # Downscale for pose speed
+                # Downscale to 33% for much faster pose detection (was 50%)
                 h, w = frame.shape[:2]
-                pose_frame = cv2.resize(frame, (max(1, w//2), max(1, h//2)))
-                pose_result = self.pose_estimator.analyze(pose_frame, camera_id=camera_id)
+                pose_frame = cv2.resize(frame, (max(1, w//3), max(1, h//3)))
+                # ⚡ ENHANCED: Pass YOLO detections for synergistic pose-object analysis
+                pose_result = self.pose_estimator.analyze(
+                    pose_frame, 
+                    camera_id=camera_id,
+                    yolo_detections=yolo_detections  # Enable synergistic analysis
+                )
                 self._cache['pose_result'] = pose_result
                 self.perf_times['pose'].append(time.time() - t_pose)
             else:
@@ -331,6 +350,47 @@ class UnifiedDetectionPipeline:
                 'new_tracks': tracking_result.new_tracks,
                 'lost_tracks': tracking_result.lost_tracks
             }
+            
+            # 5.1 📦 OBJECT ANOMALY DETECTION (abandoned objects, crowds, weapons, etc.)
+            object_anomalies = []
+            if self.object_anomaly_detector is not None:
+                try:
+                    # Extract pose data for weapon detection
+                    pose_keypoints = getattr(pose_result, 'keypoints', []) if pose_result else []
+                    pose_bboxes = []
+                    if pose_keypoints:
+                        # Extract bounding boxes for persons from YOLO
+                        for obj in yolo_detections:
+                            if obj.get('class') == 'person':
+                                pose_bboxes.append(obj.get('bbox', (0, 0, 0, 0)))
+                    
+                    object_anomalies = self.object_anomaly_detector.detect_anomalies(
+                        frame=frame,
+                        yolo_detections=yolo_detections,
+                        tracked_objects=tracked_objects_data,
+                        frame_number=self.frame_count,
+                        pose_keypoints=pose_keypoints,  # Enable weapon detection
+                        pose_bboxes=pose_bboxes  # Person bounding boxes
+                    )
+                    
+                    # Add to result
+                    result['detections']['object_anomalies'] = [
+                        {
+                            'type': anomaly.anomaly_type.value,
+                            'confidence': anomaly.confidence,
+                            'object_class': anomaly.object_class,
+                            'bbox': anomaly.bbox,
+                            'duration': anomaly.duration,
+                            'details': anomaly.details,
+                            'severity': anomaly.severity
+                        }
+                        for anomaly in object_anomalies
+                    ]
+                except Exception as e:
+                    print(f"⚠️ Object anomaly detection error: {e}")
+                    result['detections']['object_anomalies'] = []
+            else:
+                result['detections']['object_anomalies'] = []
             
             # 5.5 ADVANCED OBJECT TRACKING & CONTEXTUAL ANALYSIS (if available)
             advanced_tracks = []
@@ -534,13 +594,14 @@ class UnifiedDetectionPipeline:
             
             # ONLY REPORT ANOMALIES (fusion_score >= 0.70)
             if fusion_detection is None:
-                # Normal scene - no anomaly detected
+                # Start with neutral defaults; we'll update after rule evaluation below
                 result['fusion'] = None
                 result['anomaly_detected'] = False
                 result['alerts'] = []
-                result['threat_level'] = 'NORMAL'
+                result['threat_level'] = 'INFO'
                 result['is_dangerous'] = False
-                result['summary'] = 'Normal activity - No anomalies detected'
+                # Don't show any "normal activity" banner; this system is anomaly-only
+                result['summary'] = ''
             else:
                 # ANOMALY DETECTED - Professional fusion result
                 result['fusion'] = {
@@ -646,8 +707,19 @@ class UnifiedDetectionPipeline:
             rule_level = rule_result.threat_level.value
             result['threat_level'] = max(current_level, rule_level, key=lambda k: severity_rank.get(k, 0))
             result['is_dangerous'] = result['threat_level'] in ['HIGH', 'CRITICAL']
-            if rule_result.summary and rule_result.alerts:
-                result['summary'] = rule_result.summary
+            # If no fusion anomaly, but rules raised alerts above INFO, treat as anomaly-only output
+            if fusion_detection is None:
+                if rule_result.alerts and result['threat_level'] != 'INFO':
+                    result['anomaly_detected'] = True
+                    result['summary'] = rule_result.summary or ''
+                else:
+                    # Keep anomaly_detected False and leave summary empty (no normal banner)
+                    result['anomaly_detected'] = False
+                    result['summary'] = ''
+            else:
+                # With fusion anomaly, prefer rule summary when present
+                if rule_result.summary and rule_result.alerts:
+                    result['summary'] = rule_result.summary
             
             # 9. Create Professional Visualization
             vis_frame = self._create_visualization(
@@ -660,13 +732,14 @@ class UnifiedDetectionPipeline:
                 fusion_detection
             )
             
-            # ⭐ OPTIMIZED ENCODING FOR SMOOTH REAL-TIME STREAMING ⭐
-            # Quality 70 = Optimal balance for real-time (faster encoding/decoding)
-            # JPEG_OPTIMIZE = 1 enables Huffman optimization for smaller files
-            # Aggressive but reasonable compression for real-time
+            # ⚡ ULTRA-OPTIMIZED ENCODING FOR MAXIMUM FPS ⚡
+            # Quality 40-45 = Aggressive compression for real-time streaming
+            # JPEG_OPTIMIZE = 0 = Skip Huffman optimization (faster encoding)
+            # Prioritize FPS over slight quality loss
             _, buffer = cv2.imencode('.jpg', vis_frame, [
-                cv2.IMWRITE_JPEG_QUALITY, 60,
-                cv2.IMWRITE_JPEG_OPTIMIZE, 1
+                cv2.IMWRITE_JPEG_QUALITY, 40,  # Aggressive compression for speed
+                cv2.IMWRITE_JPEG_OPTIMIZE, 0,  # Skip optimization for speed
+                cv2.IMWRITE_JPEG_PROGRESSIVE, 0  # Disable progressive (faster)
             ])
             result['frame_base64'] = base64.b64encode(buffer).decode('utf-8')
             

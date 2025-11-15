@@ -1,5 +1,9 @@
 import React, { useState, useEffect, useRef } from "react";
 
+// Environment variables for API/WebSocket URLs
+const WS_BASE = process.env.REACT_APP_WS_BASE || "ws://localhost:8000";
+const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:8000";
+
 export default function LiveCameraV2({
   camera, // Camera configuration object
   onAnomaly,
@@ -40,6 +44,7 @@ export default function LiveCameraV2({
         autoResumeTimerRef.current = null;
       }
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const startCamera = async () => {
@@ -193,7 +198,7 @@ export default function LiveCameraV2({
       setStatus("Connecting to analysis server...");
 
       // Connect to camera-specific WebSocket endpoint
-      const ws = new WebSocket(`ws://localhost:8000/ws/stream/${cameraId}`);
+      const ws = new WebSocket(`${WS_BASE}/ws/stream/${cameraId}`);
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -367,7 +372,7 @@ export default function LiveCameraV2({
           try {
             // Send to backend to save in uploads folder
             const response = await fetch(
-              "http://localhost:8000/api/save-screenshot",
+              `${API_BASE}/api/save-screenshot`,
               {
                 method: "POST",
                 body: formData,

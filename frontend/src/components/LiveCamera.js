@@ -1,6 +1,10 @@
 import React, { useState, useRef, useEffect } from "react";
 import "./LiveCamera.css"; // Professional animations and styles
 
+// Environment variables for API/WebSocket URLs
+const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:8000";
+const WS_BASE = process.env.REACT_APP_WS_BASE || "ws://localhost:8000";
+
 function LiveCamera({
   onDetection,
   onAnomaly,
@@ -71,7 +75,7 @@ function LiveCamera({
     setIsLoadingHistory(true);
     try {
       const response = await fetch(
-        "http://localhost:8000/api/detections/history"
+        `${API_BASE}/api/detections/history`
       );
       if (response.ok) {
         const data = await response.json();
@@ -101,7 +105,7 @@ function LiveCamera({
   const clearDetectionHistory = async () => {
     try {
       const response = await fetch(
-        "http://localhost:8000/api/detections/clear",
+        `${API_BASE}/api/detections/clear`,
         {
           method: "POST",
         }
@@ -227,11 +231,11 @@ function LiveCamera({
     }
 
     console.log("🚀 Starting live analysis...");
-    console.log("📡 Connecting to WebSocket: ws://localhost:8000/ws/stream");
+    console.log("📡 Connecting to WebSocket: " + WS_BASE + "/ws/stream");
     setStatusMessage("Connecting to analysis server...");
 
     // Connect WebSocket
-    const ws = new WebSocket("ws://localhost:8000/ws/stream");
+    const ws = new WebSocket(`${WS_BASE}/ws/stream`);
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -412,9 +416,10 @@ function LiveCamera({
       fusion: data.fusion || null,
       // Professional threat assessment
       alerts: data.alerts || [],
-      threat_level: data.threat_level || "NORMAL",
+  threat_level: data.threat_level || "INFO",
       is_dangerous: data.is_dangerous || false,
-      summary: data.summary || "Normal activity",
+  // Anomaly-only: no normal banner fallback
+  summary: data.summary || "",
       // Reference data
       ml_model: data.ml_model || {},
       yolo: data.yolo || {},

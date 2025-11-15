@@ -148,18 +148,20 @@ class IntelligentFusionEngine:
     WEIGHT_POSE = 0.30      # Pose estimation (increased)
     WEIGHT_MOTION = 0.15    # Motion analysis (supporting evidence)
     
-    # Detection threshold
-    ANOMALY_THRESHOLD = 0.70  # Report only if score >= 0.70
+    # Detection threshold - OPTIMIZED for faster detection
+    ANOMALY_THRESHOLD = 0.45  # Report if score >= 0.45 (was 0.55 - MORE SENSITIVE)
 
     # Consensus bonus (when multiple modalities agree)
-    # Slightly reduced to avoid overpowering a single high-scoring modality
-    CONSENSUS_BONUS = 0.10  # Add when 2+ modalities detect same anomaly
+    # INCREASED to reward multi-modal agreement for better confidence
+    CONSENSUS_BONUS = 0.20  # Add when 2+ modalities detect same anomaly (was 0.15 - STRONGER REWARD)
     
     def __init__(self):
         """Initialize fusion engine"""
         self.detection_history: List[FusedDetection] = []
         self.frame_count = 0
         self.detection_counter = 0  # For unique IDs
+        # Startup grace period to avoid spurious early anomalies
+        self.startup_grace_frames = 60  # ~2-3 seconds at 25-30 FPS
         # Suppression state: keep a set of suppressed detection ids so
         # previously-declined detections won't reappear. Avoid a global
         # suppression flag that stops future anomalies entirely.
@@ -266,6 +268,11 @@ class IntelligentFusionEngine:
                 threat_level = pred.get('threat_level', 'low')
                 pred_reasoning = pred.get('reasoning', '')
                 
+                # ⭐ FIX: Skip NORMAL predictions - this is an anomaly detection system
+                # We only report actual threats, not normal activity
+                if anomaly_type_str.upper() in ('NORMAL', 'NORMAL_ACTIVITY'):
+                    continue
+                
                 # Apply confidence thresholds based on anomaly type
                 min_confidence = self._get_contextual_threshold(anomaly_type_str)
                 
@@ -322,6 +329,10 @@ class IntelligentFusionEngine:
         if critical_detection:
             self.detection_history.append(critical_detection)
             return critical_detection
+
+        # Startup grace: suppress non-critical anomalies in first N frames
+        if self.frame_count < getattr(self, 'startup_grace_frames', 0):
+            return None
         
         # PRIORITY 2: Calculate individual modality scores
         ml_score = self._score_ml_model(ml_result)
@@ -371,6 +382,44 @@ class IntelligentFusionEngine:
         # DECISION: Is this an anomaly?
         if fusion_score < self.ANOMALY_THRESHOLD:
             return None  # Normal - don't report
+
+        # ⭐ BALANCED FIX: Smart handling of ML "Normal" predictions
+        # If ML says Normal with high confidence, we need good counter-evidence,
+        # BUT we shouldn't make it impossible to detect real anomalies!
+        if ml_result:
+            ml_class = (ml_result.get('class', '') or '').strip().lower()
+            ml_confidence = ml_result.get('confidence', 0.0)
+            
+            # Only apply strict filtering during STARTUP PERIOD (first 60 frames)
+            # After startup, trust the fusion engine more
+            if ml_class in ('normal', 'normalvideos', 'normal_videos') and ml_confidence > 0.85:
+                # During startup (first 60 frames): require strong counter-evidence
+                if self.frame_count < self.startup_grace_frames:
+                    has_counter_evidence = (
+                        object_score >= 0.85 or   # Dangerous objects
+                        pose_score >= 0.70 or     # Strong pose anomaly
+                        motion_score >= 0.70 or   # Strong motion anomaly
+                        fusion_score >= 0.80 or   # High fusion score
+                        active_modalities >= 3    # 3+ modalities agree
+                    )
+                    
+                    if not has_counter_evidence:
+                        # Likely initial camera stabilization - don't report
+                        return None
+                
+                # After startup: only filter out if fusion score is barely above threshold
+                # and we have NO significant signals from other modalities
+                elif fusion_score < 0.75 and object_score < 0.4 and pose_score < 0.3 and motion_score < 0.3:
+                    # Very weak signal - likely false positive
+                    return None
+
+        # Guard against weak single-modality triggers: require either a strong
+        # signal or at least 2 modalities agreeing before reporting.
+        # HIGHLY SENSITIVE thresholds to ensure all anomalies are detected
+        if not (
+            (ml_score >= 0.40) or (object_score >= 0.40) or (pose_score >= 0.30) or (motion_score >= 0.30) or (active_modalities >= 2)
+        ):
+            return None
         
         # Determine anomaly type and create detection
         anomaly_type, explanation = self._determine_anomaly_type(
@@ -461,8 +510,14 @@ class IntelligentFusionEngine:
         """
         detected_classes = [obj['class'] for obj in yolo_detections]
         
-        # Check for critical objects
-        critical_found = [cls for cls in detected_classes if cls.lower() in self.critical_objects]
+        # Check for critical objects with minimum confidence threshold to avoid FPs
+        def _ok(obj: Dict) -> bool:
+            c = str(obj.get('class','')).lower()
+            p = float(obj.get('confidence', 0.0))
+            min_p = 0.80 if c in ['fire','smoke','explosion'] else 0.78 if c in ['gun','rifle','pistol','weapon'] else 0.72
+            return c in self.critical_objects and p >= min_p
+
+        critical_found = [obj.get('class') for obj in yolo_detections if _ok(obj)]
         
         if not critical_found:
             return None
@@ -582,37 +637,40 @@ class IntelligentFusionEngine:
         return confidence
     
     def _score_objects(self, yolo_detections: List[Dict]) -> float:
-        """Score YOLO object detections (25% weight)"""
+        """Score YOLO object detections (25% weight) with confidence-aware gating."""
         if not yolo_detections:
             return 0.0
-        
-        detected_classes = [obj['class'] for obj in yolo_detections]
+
+        # Confidence thresholds to avoid inflating score with weak detections
+        thr = {
+            'person': 0.60,
+            'car': 0.60, 'truck': 0.60, 'bus': 0.60, 'motorcycle': 0.60,
+            'knife': 0.75, 'scissors': 0.75, 'gun': 0.80, 'rifle': 0.80, 'pistol': 0.80, 'weapon': 0.80,
+            'fire': 0.80, 'smoke': 0.80, 'explosion': 0.85
+        }
+
         max_score = 0.0
-        
-        # Weapon objects (already handled in critical override, but score anyway)
-        weapons = [cls for cls in detected_classes if cls.lower() in 
-                  ['knife', 'scissors', 'gun', 'rifle', 'pistol', 'weapon']]
-        
-        if weapons:
-            max_score = 0.95
-        
-        # High crowd density - score high enough to trigger detection
-        person_count = detected_classes.count('person')
+        detected = [(obj.get('class', ''), float(obj.get('confidence', 0.0))) for obj in yolo_detections]
+
+        # Weapons/high-risk objects
+        high_risk = [c for c, p in detected if c.lower() in ['knife','scissors','gun','rifle','pistol','weapon'] and p >= thr.get(c.lower(), 0.8)]
+        if high_risk:
+            max_score = max(max_score, 0.95)
+
+        # Crowd density using high-confidence persons only
+        person_count = sum(1 for c, p in detected if c == 'person' and p >= thr['person'])
         if person_count > 15:
-            # 0.95 * 0.25 (weight) = 0.2375 + some margin = needs boost
-            # Return full 1.0 to ensure detection
             max_score = max(max_score, 1.0)
         elif person_count > 10:
             max_score = max(max_score, 0.75)
         elif person_count > 5:
             max_score = max(max_score, 0.5)
-        
-        # Vehicles in unusual context
-        vehicles = [cls for cls in detected_classes if cls in 
-                   ['car', 'truck', 'bus', 'motorcycle']]
+
+        # Vehicles in unusual context (require at least moderate confidence)
+        vehicles = [(c, p) for c, p in detected if c in ['car','truck','bus','motorcycle'] and p >= thr.get(c, 0.6)]
         if vehicles and person_count > 5:
             max_score = max(max_score, 0.4)
-        
+
         return max_score
     
     def _score_pose(self, pose_result: Optional[Dict]) -> float:
@@ -623,8 +681,15 @@ class IntelligentFusionEngine:
         anomaly_type = pose_result.get('anomaly_type', '').upper()
         confidence = pose_result.get('confidence', 0.8)
         
+        # 🔫 CRITICAL: Weapon detection from pose analysis (highest priority)
+        weapon_detections = pose_result.get('weapon_detections', [])
+        if weapon_detections and len(weapon_detections) > 0:
+            # Weapon detected via pose - CRITICAL priority
+            max_weapon_conf = max(w.confidence for w in weapon_detections) if hasattr(weapon_detections[0], 'confidence') else 0.75
+            return min(max_weapon_conf * 1.2, 1.0)  # Boost weapon detections
+        
         # High severity poses
-        if any(p in anomaly_type for p in ['FIGHTING', 'ALTERCATION', 'VIOLENT']):
+        if any(p in anomaly_type for p in ['FIGHTING', 'ALTERCATION', 'VIOLENT', 'WEAPON']):
             return confidence * 1.0
         
         # Medium severity poses
@@ -709,13 +774,32 @@ class IntelligentFusionEngine:
             return AnomalyType.HIGH_CROWD_DENSITY, f"High crowd density: {person_count} people"
         
         # Priority 5: ML Model (lower confidence)
-        if ml_result and ml_result.get('class') != 'Normal':
-            ml_class = ml_result['class']
-            confidence = ml_result['confidence']
-            anomaly_type = self.ml_class_map.get(ml_class, AnomalyType.SUSPICIOUS_BEHAVIOR)
-            return anomaly_type, f"ML Model: {ml_class} ({confidence*100:.1f}% confidence)"
+        if ml_result:
+            ml_class_raw = ml_result.get('class', '').strip()
+            ml_class = ml_class_raw.lower()
+            confidence = ml_result.get('confidence', 0.0)
+            
+            # Only use ML prediction if it's NOT normal
+            if ml_class not in ('normal', 'normalvideos', 'normal_videos'):
+                anomaly_type = self.ml_class_map.get(ml_class_raw, AnomalyType.SUSPICIOUS_BEHAVIOR)
+                return anomaly_type, f"ML Model: {ml_class_raw} ({confidence*100:.1f}% confidence)"
         
-        # Fallback
+        # ⭐ BALANCED FALLBACK: Report based on detected evidence
+        person_count = detected_classes.count('person')
+        
+        # Check what evidence we have
+        has_pose_anomaly = pose_result and pose_result.get('is_anomalous')
+        has_motion_anomaly = motion_result and motion_result.get('is_unusual')
+        
+        # Determine best explanation based on available evidence
+        if has_pose_anomaly:
+            return AnomalyType.UNUSUAL_POSE, "Unusual body movements detected"
+        elif has_motion_anomaly:
+            return AnomalyType.RAPID_MOVEMENT, "Unusual motion patterns detected"
+        elif person_count > 10:
+            return AnomalyType.SUSPICIOUS_BEHAVIOR, f"Multiple persons detected ({person_count})"
+        
+        # Final fallback: generic suspicious behavior
         return AnomalyType.SUSPICIOUS_BEHAVIOR, f"Anomaly detected (fusion score: {fusion_score:.2f})"
     
     def _get_contextual_threshold(self, anomaly_type: str) -> float:

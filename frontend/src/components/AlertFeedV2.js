@@ -34,7 +34,6 @@ export default function AlertFeedV2({ alerts = [], onAlertsChange }) {
   const [localAlerts, setLocalAlerts] = useState(alerts || []);
   const [activeCount, setActiveCount] = useState((alerts || []).length);
   const [recentCount, setRecentCount] = useState(Math.min(10, (alerts || []).length));
-  const [confirmedTotal, setConfirmedTotal] = useState(0);
 
   useEffect(() => {
     setLocalAlerts(alerts || []);
@@ -162,9 +161,6 @@ export default function AlertFeedV2({ alerts = [], onAlertsChange }) {
         setActiveCount(respJson.active_notifications);
         setRecentCount(Math.min(10, respJson.active_notifications));
       }
-      if (respJson && typeof respJson.confirmed_total === 'number') {
-        setConfirmedTotal(respJson.confirmed_total);
-      }
     } catch (e) {
       console.error(e);
       window.alert("Failed to send feedback: " + e.message);
@@ -210,7 +206,6 @@ export default function AlertFeedV2({ alerts = [], onAlertsChange }) {
         setActiveCount(0);
         setRecentCount(0);
       }
-      if (rj && typeof rj.confirmed_total === 'number') setConfirmedTotal(rj.confirmed_total);
     } catch (e) {
       console.error(e);
       window.alert("Failed to decline all: " + e.message);

@@ -119,6 +119,9 @@ class RuleEngine:
         # Normal crowd flow direction (can be configured per camera)
         self.normal_flow_angle = 90  # degrees (0 = right, 90 = down)
         self.flow_tolerance = 45  # degrees tolerance
+        # Warmup to avoid initial spur-of-the-moment LOW alerts (e.g., sudden appearance)
+        self.init_time = datetime.now()
+        self.warmup_seconds = 5.0
         
     def evaluate(self,
                  yolo_detections: List[Dict],
@@ -146,10 +149,13 @@ class RuleEngine:
         people_count = detected_classes.count('person')
         
         # RULE 1: Person + Weapon = CRITICAL ALERT
-        weapons_detected = [cls for cls in detected_classes if cls in self.WEAPON_CLASSES]
+        weapons_detected = [obj for obj in yolo_detections if obj.get('class') in self.WEAPON_CLASSES]
         if people_count > 0 and weapons_detected:
-            for weapon in weapons_detected:
-                weapon_obj = next(obj for obj in yolo_detections if obj['class'] == weapon)
+            for weapon_obj in weapons_detected:
+                # Require higher confidence to avoid false alarms
+                if float(weapon_obj.get('confidence', 0.0)) < 0.78:
+                    continue
+                weapon = weapon_obj['class']
                 alerts.append(Alert(
                     level=AlertLevel.CRITICAL,
                     title="🚨 WEAPON DETECTED",
@@ -174,10 +180,12 @@ class RuleEngine:
             ))
         
         # RULE 3: Dangerous Objects
-        dangerous_objects = [cls for cls in detected_classes if cls in self.DANGEROUS_OBJECTS]
-        if dangerous_objects:
-            for obj_class in dangerous_objects:
-                obj = next(o for o in yolo_detections if o['class'] == obj_class)
+        dangerous_objs = [o for o in yolo_detections if o.get('class') in self.DANGEROUS_OBJECTS]
+        if dangerous_objs:
+            for obj in dangerous_objs:
+                if float(obj.get('confidence', 0.0)) < 0.80:
+                    continue
+                obj_class = obj['class']
                 alerts.append(Alert(
                     level=AlertLevel.CRITICAL,
                     title=f"🔥 {obj_class.upper()} DETECTED",
@@ -354,14 +362,15 @@ class RuleEngine:
         # ========================================================================
         
         # RULE 10: Abnormal Crowd Flow Direction
-        crowd_flow_alert = self.check_abnormal_crowd_flow(tracked_objects)
-        if crowd_flow_alert:
-            alerts.append(crowd_flow_alert)
-        
-        # RULE 11: Sudden Appearance/Disappearance
-        appearance_alert = self.check_sudden_appearance_disappearance(tracked_objects)
-        if appearance_alert:
-            alerts.append(appearance_alert)
+        allow_time_based_rules = (datetime.now() - self.init_time).total_seconds() > self.warmup_seconds
+        if allow_time_based_rules:
+            crowd_flow_alert = self.check_abnormal_crowd_flow(tracked_objects)
+            if crowd_flow_alert:
+                alerts.append(crowd_flow_alert)
+            # RULE 11: Sudden Appearance/Disappearance
+            appearance_alert = self.check_sudden_appearance_disappearance(tracked_objects)
+            if appearance_alert:
+                alerts.append(appearance_alert)
         
         # ========================================================================
         # END NEW RULES

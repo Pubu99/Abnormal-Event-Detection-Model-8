@@ -1,13 +1,15 @@
 """
-Pose Estimation Service
-Detects human poses and identifies anomalous behaviors:
-- Fighting detection
-- Falling detection
-- Weapon handling poses
-- Abnormal gestures
+Pose Estimation Service - ENHANCED WITH ADVANCED ALGORITHMS
+Detects human poses and identifies anomalous behaviors using:
+- Synergistic pose & object detection
+- Temporal-spatial graph modeling
+- Advanced motion feature extraction
+- Multi-modal fusion
 
-Author: AI Assistant
-Date: 2025-10-17
+Implements state-of-the-art research techniques for professional-grade detection.
+
+Author: Professional AI/ML Implementation
+Date: 2025-11-13
 """
 
 import cv2
@@ -17,6 +19,13 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import datetime
 import math
+
+# Import advanced analyzer
+try:
+    from .advanced_pose_motion import get_advanced_pose_motion_analyzer
+    _ADVANCED_ANALYZER_AVAILABLE = True
+except ImportError:
+    _ADVANCED_ANALYZER_AVAILABLE = False
 
 # Prefer OpenPose if available; fallback to MediaPipe
 _OPENPOSE_AVAILABLE = False
@@ -47,7 +56,7 @@ except Exception:
 
 @dataclass
 class PoseResult:
-    """Pose detection result"""
+    """Pose detection result with weapon detection"""
     persons_detected: int
     poses: List[Dict]  # List of detected poses with keypoints
     is_anomalous: bool
@@ -55,24 +64,49 @@ class PoseResult:
     confidence: float
     timestamp: str
     keypoints: List[List[Tuple[float, float, float]]] = field(default_factory=list)
+    weapon_detections: List = field(default_factory=list)  # List of WeaponDetection objects
+
 
 
 class PoseEstimator:
-    """Human pose estimation for anomaly detection"""
+    """
+    ENHANCED Human Pose Estimation with Advanced Algorithms
+    
+    Features:
+    - Synergistic pose & object detection
+    - Temporal-spatial graph modeling
+    - Advanced motion feature extraction
+    - Multi-modal fusion for robust anomaly detection
+    """
     
     def __init__(self, 
                  min_detection_confidence: float = 0.5,
-                 min_tracking_confidence: float = 0.5):
+                 min_tracking_confidence: float = 0.5,
+                 enable_advanced_analysis: bool = True):
         """
         Initialize pose estimator
         
         Args:
             min_detection_confidence: Minimum confidence for detection
             min_tracking_confidence: Minimum confidence for tracking
+            enable_advanced_analysis: Enable advanced pose-motion analyzer
         """
         self.enabled = _OPENPOSE_AVAILABLE or _MEDIAPIPE_AVAILABLE
         self.min_detection_confidence = min_detection_confidence
         self.min_tracking_confidence = min_tracking_confidence
+        
+        # ⚡ ADVANCED: Initialize advanced pose-motion analyzer
+        self.enable_advanced = enable_advanced_analysis and _ADVANCED_ANALYZER_AVAILABLE
+        if self.enable_advanced:
+            self.advanced_analyzer = get_advanced_pose_motion_analyzer(
+                history_length=30,
+                fps=30.0
+            )
+            print("   ⚡ Advanced Pose-Motion Analyzer: ENABLED")
+        else:
+            self.advanced_analyzer = None
+            if enable_advanced_analysis:
+                print("   ⚠️  Advanced analyzer unavailable - using basic pose estimation")
         
         # Lazy initialization - only create when first needed
         self.mp_pose = None
@@ -89,6 +123,9 @@ class PoseEstimator:
         # Previous raw keypoints for simple exponential smoothing
         self._prev_keypoints = None
         self._smoothing_alpha = 0.45
+        
+        # Frame counter for temporal tracking
+        self.frame_number = 0
 
         # Counters for persistence-based heuristics
         self._anomaly_counters = {}
@@ -133,16 +170,22 @@ class PoseEstimator:
             self._initialized = True
         
         
-    def analyze(self, frame: np.ndarray, camera_id: Optional[str] = None) -> PoseResult:
+    def analyze(self, frame: np.ndarray, 
+                camera_id: Optional[str] = None,
+                yolo_detections: Optional[List[Dict]] = None) -> PoseResult:
         """
-        Analyze poses in the frame
+        ENHANCED: Analyze poses with advanced temporal-spatial modeling
         
         Args:
             frame: Input BGR frame
+            camera_id: Optional camera identifier
+            yolo_detections: Optional YOLO object detections for synergistic analysis
             
         Returns:
             PoseResult with detected anomalies
         """
+        self.frame_number += 1
+        
         if not self.enabled:
             return PoseResult(
                 persons_detected=0,
@@ -158,6 +201,17 @@ class PoseEstimator:
         
         poses = []
         keypoints_list = []
+        bounding_boxes = []
+        
+        # Extract bounding boxes from YOLO detections (for synergistic analysis)
+        if yolo_detections:
+            for det in yolo_detections:
+                if det.get('class') == 'person':
+                    bbox = det.get('bbox')
+                    if bbox:
+                        bounding_boxes.append(bbox)
+        
+        # Run pose detection
         if _OPENPOSE_AVAILABLE and self.openpose_wrapper is not None:
             # OpenPose inference
             try:
@@ -167,19 +221,19 @@ class PoseEstimator:
                 self.openpose_wrapper.emplaceAndPop([datum])
                 if datum.poseKeypoints is not None and len(datum.poseKeypoints.shape) >= 2:
                     # datum.poseKeypoints shape: (numPeople, 25, 3)
-                    person = datum.poseKeypoints[0]
-                    # Normalize to width/height
-                    h, w = frame.shape[:2]
-                    keypoints = [(kp[0] / max(w,1e-6), kp[1] / max(h,1e-6), kp[2]) for kp in person]
-                    keypoints_list.append(keypoints)
-                    try:
-                        # Apply light smoothing to keypoints before feature extraction
-                        sk = self._smooth_keypoints(keypoints)
-                        pose_data = self._extract_pose_features(sk, frame.shape)
-                        poses.append(pose_data)
-                    except Exception as e:
-                        # Skip feature extraction errors for robustness
-                        print(f"⚠️ Pose feature extraction failed (OpenPose): {e}")
+                    for person_idx in range(datum.poseKeypoints.shape[0]):
+                        person = datum.poseKeypoints[person_idx]
+                        # Normalize to width/height
+                        h, w = frame.shape[:2]
+                        keypoints = [(kp[0] / max(w,1e-6), kp[1] / max(h,1e-6), kp[2]) for kp in person]
+                        keypoints_np = np.array([[kp[0]*w, kp[1]*h, kp[2]] for kp in keypoints])
+                        keypoints_list.append(keypoints_np)
+                        try:
+                            sk = self._smooth_keypoints(keypoints)
+                            pose_data = self._extract_pose_features(sk, frame.shape)
+                            poses.append(pose_data)
+                        except Exception as e:
+                            print(f"⚠️ Pose feature extraction failed (OpenPose): {e}")
             except Exception as e:
                 print(f"⚠️ OpenPose inference failed this frame: {e}")
         elif _MEDIAPIPE_AVAILABLE and self.pose is not None:
@@ -188,11 +242,14 @@ class PoseEstimator:
             results = self.pose.process(rgb_frame)
             if results.pose_landmarks:
                 landmarks = results.pose_landmarks.landmark
+                h, w = frame.shape[:2]
                 keypoints = [
                     (lm.x, lm.y, lm.visibility)
                     for lm in landmarks
                 ]
-                keypoints_list.append(keypoints)
+                # Convert to pixel coordinates for advanced analyzer
+                keypoints_np = np.array([[lm.x * w, lm.y * h, lm.visibility] for lm in landmarks])
+                keypoints_list.append(keypoints_np)
                 try:
                     sk = self._smooth_keypoints(keypoints)
                     pose_data = self._extract_pose_features(sk, frame.shape)
@@ -200,17 +257,44 @@ class PoseEstimator:
                 except Exception as e:
                     print(f"⚠️ Pose feature extraction failed (MediaPipe): {e}")
         
+        # ⚡ ADVANCED ANALYSIS: Use temporal-spatial graph modeling
+        advanced_result = None
+        if self.enable_advanced and self.advanced_analyzer and keypoints_list:
+            try:
+                # Fill bounding boxes if missing (estimate from keypoints)
+                if len(bounding_boxes) < len(keypoints_list):
+                    for kpts in keypoints_list[len(bounding_boxes):]:
+                        if len(kpts) > 0:
+                            valid_kpts = kpts[kpts[:, 2] > 0.3][:, :2]
+                            if len(valid_kpts) > 0:
+                                x_min, y_min = valid_kpts.min(axis=0)
+                                x_max, y_max = valid_kpts.max(axis=0)
+                                w_bbox = int(x_max - x_min)
+                                h_bbox = int(y_max - y_min)
+                                bounding_boxes.append((int(x_min), int(y_min), w_bbox, h_bbox))
+                
+                # Run advanced analysis
+                advanced_result = self.advanced_analyzer.analyze_frame(
+                    frame=frame,
+                    pose_keypoints=keypoints_list,
+                    bounding_boxes=bounding_boxes,
+                    frame_number=self.frame_number
+                )
+            except Exception as e:
+                print(f"⚠️ Advanced pose-motion analysis failed: {e}")
+                advanced_result = None
+        
         # Update history (store flattened per-frame pose features)
-        # Keep only first person's pose for temporal analysis (simpler for now)
         frame_pose = poses[0] if poses else None
         self.pose_history.append(frame_pose)
         if len(self.pose_history) > self.history_size:
             self.pose_history.pop(0)
-        # Store last frame for possible sample saving
         self._last_frame_for_sample = frame.copy()
         
-        # Detect anomalies
-        is_anomalous, anomaly_type, confidence = self._detect_pose_anomaly(poses, camera_id=camera_id)
+        # Detect anomalies using BOTH basic and advanced methods
+        is_anomalous, anomaly_type, confidence = self._detect_pose_anomaly(
+            poses, camera_id=camera_id, advanced_result=advanced_result
+        )
         
         return PoseResult(
             persons_detected=len(poses),
@@ -219,7 +303,8 @@ class PoseEstimator:
             anomaly_type=anomaly_type,
             confidence=confidence,
             timestamp=datetime.now().isoformat(),
-            keypoints=keypoints_list
+            keypoints=keypoints_list,
+            weapon_detections=[]  # Weapon detection now handled by object_anomaly_detector
         )
 
     def _smooth_keypoints(self, keypoints: List[Tuple[float,float,float]]) -> List[Tuple[float,float,float]]:
@@ -346,13 +431,31 @@ class PoseEstimator:
         
         return angle
     
-    def _detect_pose_anomaly(self, poses: List[Dict], camera_id: Optional[str] = None) -> Tuple[bool, Optional[str], float]:
+    def _detect_pose_anomaly(self, poses: List[Dict], 
+                            camera_id: Optional[str] = None,
+                            advanced_result: Optional[Dict] = None) -> Tuple[bool, Optional[str], float]:
         """
-        Detect anomalous poses
+        ENHANCED: Detect anomalous poses using multi-modal fusion
         
+        Combines basic pose analysis with advanced temporal-spatial modeling
+        
+        Args:
+            poses: Basic pose features
+            camera_id: Optional camera identifier
+            advanced_result: Results from advanced pose-motion analyzer
+            
         Returns:
             (is_anomalous, anomaly_type, confidence)
         """
+        # ⚡ PRIORITY 1: Advanced analysis (if available)
+        if advanced_result and advanced_result.get('is_anomalous'):
+            return (
+                True,
+                advanced_result['anomaly_type'],
+                advanced_result['confidence']
+            )
+        
+        # PRIORITY 2: Basic pose analysis (fallback)
         if not poses:
             return False, None, 0.0
 
@@ -382,7 +485,6 @@ class PoseEstimator:
                 self._anomaly_counters[key] = self._anomaly_counters.get(key, 0) + 1
                 if self._anomaly_counters.get(key, 0) >= max(1, persistence):
                     # reset other counters for this camera to avoid duplicate alerts
-                    # keep only this key
                     keys_to_clear = [k for k in list(self._anomaly_counters.keys()) if k.endswith(f"::{camera_id}") and k != key]
                     for k in keys_to_clear:
                         self._anomaly_counters.pop(k, None)

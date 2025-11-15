@@ -125,7 +125,11 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],  # React frontend
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://10.50.227.186:3000",
+    ],  # React frontend (localhost and LAN IP)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -165,18 +169,58 @@ async def startup_event():
     
     print("🚀 Starting Enhanced Anomaly Detection API v3.0...")
     
+    # ========================================
+    # PROFESSIONAL CACHE MANAGEMENT
+    # ========================================
+    try:
+        from utils.cache_manager import get_cache_manager
+        
+        backend_root = Path(__file__).parent.parent
+        cache_manager = get_cache_manager(backend_root)
+        
+        # Perform smart cache cleanup
+        # - Fresh startup (after stop): Clears all caches
+        # - Hot reload (during dev): Preserves caches
+        is_fresh_startup = cache_manager.startup_cache_cleanup()
+        
+        # Store cache manager in app state for shutdown handler
+        app.state.cache_manager = cache_manager
+        
+        if is_fresh_startup:
+            print("✅ Fresh startup detected - Caches cleared for optimal performance")
+        else:
+            print("♻️  Hot reload detected - Runtime caches preserved")
+        
+    except Exception as e:
+        print(f"⚠️  Cache cleanup warning: {e}")
+        # Non-critical, continue startup
+    
+    # ========================================
+    # INITIALIZE ANOMALY DETECTOR
+    # ========================================
     try:
         # Get absolute paths relative to project root
         project_root = Path(__file__).parent.parent.parent
         model_path = project_root / "models" / "best_model.pth"
         config_path = project_root / "configs" / "config_research_enhanced.yaml"
         
+        # ⚡ PERFORMANCE OPTIMIZATION FOR REAL-TIME DETECTION
+        # Enable fast_mode for smoother FPS and lower latency
+        fast_mode = os.environ.get('FAST_MODE', '1').lower() not in ('0', 'false', 'off')
+        
         detector = AnomalyDetector(
             model_path=str(model_path),
             config_path=str(config_path),
             yolo_model="yolov10s.pt",
             device="cuda",
-            confidence_threshold=0.7
+            confidence_threshold=0.7,
+            # ⚡ Fast mode optimizations
+            fast_mode=fast_mode,              # Enable fast processing
+            fast_image_size=128,               # Smaller image for ML (faster)
+            fast_sequence_length=8,            # Shorter sequences (less latency)
+            yolo_fast_imgsz=416,               # Smaller YOLO input (faster inference)
+            yolo_mode='detect',                # Use detect mode (faster than track)
+            yolo_imgsz=640,                    # Standard YOLO size for fallback
         )
 
         # RL policy toggles via environment variables
@@ -241,6 +285,36 @@ async def startup_event():
         print("   Make sure best_model.pth is in models/ directory")
         import traceback
         traceback.print_exc()
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Clean up resources and mark backend as stopped."""
+    print("\n🛑 Shutting down Enhanced Anomaly Detection API...")
+    
+    try:
+        # Mark backend as stopped so next startup knows to clear caches
+        if hasattr(app.state, 'cache_manager'):
+            app.state.cache_manager.mark_backend_stopped()
+            print("✅ Backend state cleaned up")
+        
+        # Clean up any running training processes
+        if hasattr(app.state, 'current_training_proc'):
+            if app.state.current_training_proc is not None:
+                try:
+                    app.state.current_training_proc.terminate()
+                    app.state.current_training_proc.join(timeout=5)
+                    print("✅ Training process terminated")
+                except Exception as e:
+                    print(f"⚠️  Error terminating training process: {e}")
+        
+        # Give services time to clean up
+        await asyncio.sleep(0.5)
+        
+        print("✅ Shutdown complete\n")
+        
+    except Exception as e:
+        print(f"⚠️  Shutdown warning: {e}")
 
 
 @app.get("/", response_model=HealthResponse)
@@ -553,9 +627,10 @@ async def websocket_stream(websocket: WebSocket, camera_id: str):
                         "fusion": fusion_data,
                         
                         # Professional threat assessment
-                        "threat_level": result.get('threat_level', 'NORMAL'),
+                        "threat_level": result.get('threat_level', 'INFO'),
                         "is_dangerous": result.get('is_dangerous', False),
-                        "summary": result.get('summary', 'Normal activity'),
+                        # Anomaly-only UI: do not provide a normal summary fallback
+                        "summary": result.get('summary', ''),
                         "alerts": result.get('alerts', []),
                         
                         # ⭐ RAW DETECTION DATA FOR FRONTEND OVERLAY ⭐

@@ -26,10 +26,24 @@ export default function ProfessionalDashboardV2() {
 
   const apiBase = process.env.REACT_APP_API_BASE || "http://localhost:8000";
 
+  const loadCameras = useCallback(async () => {
+    try {
+      const response = await fetch(`${apiBase}/api/cameras`);
+      const data = await response.json();
+      if (data.success) {
+        setCameras(data.cameras);
+        const onlineCount = data.cameras.filter(c => c.status === "online").length;
+        setSystemStats(prev => ({ ...prev, camerasOnline: onlineCount }));
+      }
+    } catch (error) {
+      console.error("Error loading cameras:", error);
+    }
+  }, [apiBase]);
+
   // Load cameras on mount
   useEffect(() => {
     loadCameras();
-  }, []);
+  }, [loadCameras]);
 
   // Update uptime every second
   useEffect(() => {
@@ -52,20 +66,6 @@ export default function ProfessionalDashboardV2() {
       }
     }
   }, [cameras, selectedCamera]);
-
-  const loadCameras = async () => {
-    try {
-      const response = await fetch(`${apiBase}/api/cameras`);
-      const data = await response.json();
-      if (data.success) {
-        setCameras(data.cameras);
-        const onlineCount = data.cameras.filter(c => c.status === "online").length;
-        setSystemStats(prev => ({ ...prev, camerasOnline: onlineCount }));
-      }
-    } catch (error) {
-      console.error("Error loading cameras:", error);
-    }
-  };
 
   const onStreamReady = useCallback((stream) => {
     setVideoStream(stream);
