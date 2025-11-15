@@ -84,3 +84,4 @@ imageio-ffmpeg==0.5.1
 # ===========================================
 pynvml==11.5.3
 joblib==1.4.2
+firebase-admin
